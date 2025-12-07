@@ -1,0 +1,54 @@
+{
+  "name": "dexscreener-realtime-client",
+  "version": "1.0.0",
+  "description": "Node.js/TypeScript SDK and CLI for consuming SSE streams from DexScreener Realtime Monitor Apify Actor",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "dexrt": "./dist/cli.cjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "dexscreener",
+    "sse",
+    "realtime",
+    "crypto",
+    "dex",
+    "trading",
+    "apify"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "eventsource": "^4.1.0",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/yargs": "^17.0.35",
+    "fast-check": "^4.4.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  }
+}
