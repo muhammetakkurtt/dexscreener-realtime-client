@@ -19,6 +19,7 @@ export interface CliOptions {
   jsonlPath?: string;
   webhookUrl?: string;
   retryMs: number;
+  keepAliveMs?: number;
 }
 
 /** Parses command line arguments into CLI options. */
@@ -66,6 +67,10 @@ export function parseArgs(args: string[]): CliOptions {
       default: DEFAULT_RETRY_MS,
       describe: 'Reconnection delay in milliseconds',
     })
+    .option('keep-alive-ms', {
+      type: 'number',
+      describe: 'Health check interval in milliseconds (default: 120000, set to 0 to disable)',
+    })
     .help()
     .alias('h', 'help')
     .version(false)
@@ -82,6 +87,7 @@ export function parseArgs(args: string[]): CliOptions {
     jsonlPath: parsed['jsonl-path'],
     webhookUrl: parsed['webhook-url'],
     retryMs: parsed['retry-ms'],
+    keepAliveMs: parsed['keep-alive-ms'],
   };
 }
 
@@ -168,6 +174,7 @@ export function createStreams(
       pageUrl,
       streamId,
       retryMs: options.retryMs,
+      keepAliveMs: options.keepAliveMs,
       onBatch: (event: DexEvent, ctx: StreamContext) => {
         const output = createOutputEvent(ctx.streamId || streamId, pageUrl, event);
         outputHandler(output);

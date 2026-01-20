@@ -188,6 +188,7 @@ node dist/cli.cjs \
 | `--jsonl-path` | File path for JSONL output | Required for `jsonl` mode |
 | `--webhook-url` | Webhook URL for HTTP POST | Required for `webhook` mode |
 | `--retry-ms` | Reconnection delay in ms | No (default: 3000) |
+| `--keep-alive-ms` | Health check interval in ms | No (default: 120000, set to 0 to disable) |
 
 ## API Reference
 
@@ -200,7 +201,7 @@ type DexStreamOptions = {
   pageUrl: string;           // DexScreener page URL
   streamId?: string;         // Optional stream identifier
   retryMs?: number;          // Reconnection delay (default: 3000)
-  keepAliveMs?: number;      // Health check interval
+  keepAliveMs?: number;      // Health check interval (default: 120000, set to 0 to disable)
   onBatch?: (event: DexEvent, ctx: StreamContext) => void;
   onPair?: (pair: Pair, ctx: StreamContext) => void;
   onError?: (error: unknown, ctx: StreamContext) => void;

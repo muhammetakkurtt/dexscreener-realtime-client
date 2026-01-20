@@ -10,6 +10,7 @@ import { buildSseUrl, validateUrls } from './utils/url.js';
 import { KeepAliveManager } from './utils/keep-alive.js';
 
 const DEFAULT_RETRY_MS = 3000;
+const DEFAULT_KEEP_ALIVE_MS = 120000; // 2 minutes
 
 /**
  * SSE stream client for consuming DexScreener realtime data.
@@ -46,7 +47,7 @@ export class DexScreenerStream {
     this.apiToken = options.apiToken;
     this.streamId = options.streamId;
     this.retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
-    this.keepAliveMs = options.keepAliveMs;
+    this.keepAliveMs = options.keepAliveMs ?? DEFAULT_KEEP_ALIVE_MS;
     this.onBatch = options.onBatch;
     this.onPair = options.onPair;
     this.onError = options.onError;
@@ -256,7 +257,7 @@ export class DexScreenerStream {
   }
 
   private startKeepAlive(): void {
-    if (this.keepAliveMs === undefined) {
+    if (this.keepAliveMs === undefined || this.keepAliveMs <= 0) {
       return;
     }
 
