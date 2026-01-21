@@ -7,7 +7,7 @@
  * How to run:
  * 1. Build the project first: npm run build
  * 2. Copy .env.example to .env and fill in your credentials:
- *    - APIFY_TOKEN: Your Apify API token from https://apify.com?fpr=muh
+ *    - APIFY_TOKEN: Your Apify API token from https://console.apify.com/settings/integrations?fpr=muh
  *    - DEX_ACTOR_BASE: Apify Standby Actor URL (e.g., https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor)
  * 3. Run this example: npx tsx examples/basic-sdk.ts
  *
