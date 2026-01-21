@@ -105,7 +105,7 @@ describe('CLI Validation', () => {
     it('should not throw for valid stdout options', () => {
       const options: CliOptions = {
         baseUrl: 'https://example.com',
-        apiToken: 'test-token',
+        apiToken: 'apify_api_test_token',
         pageUrl: ['https://dexscreener.com/solana/trending'],
         mode: 'stdout',
         retryMs: 3000,
@@ -122,40 +122,46 @@ describe('CLI Validation', () => {
         retryMs: 3000,
       };
       expect(() => validateOptions(options)).toThrow('process.exit called');
-      expect(mockConsoleError).toHaveBeenCalledWith('Error: API token is required. Use --api-token or set APIFY_TOKEN environment variable.');
+      expect(mockConsoleError).toHaveBeenCalledWith(
+        expect.stringContaining("[ERR_1006] Invalid configuration value for 'apiToken'")
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
 
     it('should exit with error when jsonl mode missing jsonl-path', () => {
       const options: CliOptions = {
         baseUrl: 'https://example.com',
-        apiToken: 'test-token',
+        apiToken: 'apify_api_test_token',
         pageUrl: ['https://dexscreener.com/solana/trending'],
         mode: 'jsonl',
         retryMs: 3000,
       };
       expect(() => validateOptions(options)).toThrow('process.exit called');
-      expect(mockConsoleError).toHaveBeenCalledWith('Error: --jsonl-path is required when mode is jsonl');
+      expect(mockConsoleError).toHaveBeenCalledWith(
+        expect.stringContaining("[ERR_1007] Invalid configuration value for 'jsonlPath'")
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
 
     it('should exit with error when webhook mode missing webhook-url', () => {
       const options: CliOptions = {
         baseUrl: 'https://example.com',
-        apiToken: 'test-token',
+        apiToken: 'apify_api_test_token',
         pageUrl: ['https://dexscreener.com/solana/trending'],
         mode: 'webhook',
         retryMs: 3000,
       };
       expect(() => validateOptions(options)).toThrow('process.exit called');
-      expect(mockConsoleError).toHaveBeenCalledWith('Error: --webhook-url is required when mode is webhook');
+      expect(mockConsoleError).toHaveBeenCalledWith(
+        expect.stringContaining("[ERR_1005] Invalid configuration value for 'webhookUrl'")
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
 
     it('should not throw for valid jsonl options', () => {
       const options: CliOptions = {
         baseUrl: 'https://example.com',
-        apiToken: 'test-token',
+        apiToken: 'apify_api_test_token',
         pageUrl: ['https://dexscreener.com/solana/trending'],
         mode: 'jsonl',
         jsonlPath: './events.jsonl',
@@ -167,7 +173,7 @@ describe('CLI Validation', () => {
     it('should not throw for valid webhook options', () => {
       const options: CliOptions = {
         baseUrl: 'https://example.com',
-        apiToken: 'test-token',
+        apiToken: 'apify_api_test_token',
         pageUrl: ['https://dexscreener.com/solana/trending'],
         mode: 'webhook',
         webhookUrl: 'https://webhook.example.com/hook',

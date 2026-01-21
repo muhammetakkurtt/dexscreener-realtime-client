@@ -2,6 +2,12 @@
 
 Node.js/TypeScript SDK and CLI for consuming SSE streams from the DexScreener Realtime Monitor Apify Actor. This client makes it easy to integrate real-time DexScreener data into your backends, bots, and data pipelines.
 
+## Documentation
+
+- **[User Guide](./docs/GUIDE.md)** - Complete tutorials, examples, and best practices
+- **[API Reference](./docs/API.md)** - Technical reference for all classes and methods
+- **[Examples](./examples/)** - Working code examples
+
 ## Prerequisites
 
 - Node.js 18.0.0 or higher
@@ -130,14 +136,14 @@ Print JSON events to stdout:
 ```bash
 node dist/cli.cjs \
   --base-url https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor \
-  --api-token YOUR_TOKEN \
+  --api-token apify_api_xxxxxxxxxxxxx \
   --page-url "https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc"
 ```
 
 Or using environment variable:
 
 ```bash
-export APIFY_TOKEN=your_token
+export APIFY_TOKEN=apify_api_xxxxxxxxxxxxx
 node dist/cli.cjs \
   --base-url https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor \
   --page-url "https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc"
@@ -164,7 +170,7 @@ node dist/cli.cjs \
   --base-url https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor \
   --page-url "https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc" \
   --mode webhook \
-  --webhook-url https://your-backend.com/dex-events
+  --webhook-url https://api.example.com/webhooks/dexscreener
 ```
 
 ### Multiple Streams
@@ -426,6 +432,251 @@ The SDK automatically parses SSE messages and delivers clean `DexEvent` objects 
 ```typescript
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 ```
+
+## Configuration Files
+
+The CLI supports configuration files for easier management of settings across environments.
+
+### Creating a Configuration File
+
+Generate a default configuration file:
+
+```bash
+node dist/cli.cjs --init
+```
+
+This creates `.dexrtrc.json` or `.dexrtrc.yaml` in your current directory.
+
+### Configuration File Format
+
+**JSON Format** (`.dexrtrc.json`):
+```json
+{
+  "baseUrl": "https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor",
+  "apiToken": "apify_api_xxxxxxxxxxxxx",
+  "pageUrls": [
+    "https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc"
+  ],
+  "mode": "jsonl",
+  "output": {
+    "jsonlPath": "./events.jsonl",
+    "compression": {
+      "enabled": true,
+      "level": 6
+    },
+    "rotation": {
+      "maxSizeMB": 100,
+      "interval": "daily"
+    }
+  }
+}
+```
+
+**YAML Format** (`.dexrtrc.yaml`):
+```yaml
+# DexScreener Client Configuration
+baseUrl: https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor
+apiToken: apify_api_xxxxxxxxxxxxx
+
+pageUrls:
+  - https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc
+
+mode: jsonl
+
+output:
+  jsonlPath: ./events.jsonl
+  compression:
+    enabled: true
+    level: 6
+  rotation:
+    maxSizeMB: 100
+    interval: daily
+```
+
+### Configuration Profiles
+
+Use profiles for different environments:
+
+```json
+{
+  "profiles": {
+    "dev": {
+      "baseUrl": "https://dev-actor.apify.actor",
+      "pageUrls": ["https://dexscreener.com/solana"],
+      "mode": "stdout"
+    },
+    "prod": {
+      "baseUrl": "https://prod-actor.apify.actor",
+      "pageUrls": [
+        "https://dexscreener.com/solana",
+        "https://dexscreener.com/ethereum"
+      ],
+      "mode": "webhook",
+      "output": {
+        "webhookUrl": "https://api.example.com/events"
+      }
+    }
+  },
+  "default": "dev"
+}
+```
+
+Use a specific profile:
+```bash
+node dist/cli.cjs --profile prod
+```
+
+### Validate Configuration
+
+Check your configuration without starting streams:
+
+```bash
+node dist/cli.cjs --validate
+```
+
+---
+
+## Features
+
+- 🔄 **Real-time Streaming** - SSE connection with automatic reconnection
+- 🌐 **Multi-Stream Support** - Monitor multiple pages/chains simultaneously  
+- 🔍 **Advanced Filtering** - Filter pairs by chain, liquidity, volume, price change
+- 🔧 **Data Transformation** - Select and reshape fields with aliases
+- 📊 **Monitoring** - Prometheus metrics, health checks, structured logging
+- 📦 **Output Management** - Compression, rotation, batching, throttling, sampling
+- ⚡ **Production Ready** - Error handling, graceful shutdown, keep-alive management
+
+For detailed guides and examples, see the [User Guide](./docs/GUIDE.md).
+
+---
+
+## Filtering and Transformation
+
+### Filtering Pairs
+
+```typescript
+import { FilterBuilder } from './dist/index.js';
+
+const filter = FilterBuilder.combineFilters([
+  FilterBuilder.chainFilter(['solana', 'ethereum']),
+  FilterBuilder.liquidityFilter(50000),
+  FilterBuilder.volumeFilter('h24', 100000)
+], 'AND');
+```
+
+### Transforming Data
+
+```typescript
+import { Transformer } from './dist/index.js';
+
+const transformer = new Transformer({
+  fields: ['baseToken.symbol', 'priceUsd', 'volume.h24'],
+  aliases: { 'baseToken.symbol': 'symbol', 'priceUsd': 'price' }
+});
+```
+
+See [User Guide](./docs/GUIDE.md) for complete filtering and transformation examples.
+
+---
+
+## Monitoring
+
+The SDK provides production-ready monitoring capabilities:
+
+- **Health Checks** - HTTP endpoint for health status
+- **Prometheus Metrics** - Export metrics for monitoring
+- **Structured Logging** - JSON/text logging with levels
+- **Performance Monitoring** - Track processing duration and memory
+- **Alerts** - Threshold-based alerting
+
+**Quick Example:**
+```typescript
+import { HealthChecker, MetricsCollector, StructuredLogger } from './dist/index.js';
+
+const health = new HealthChecker(3000);
+const metrics = new MetricsCollector();
+const logger = new StructuredLogger('info', 'json');
+
+health.start();  // http://localhost:3000/health
+```
+
+**CLI Usage:**
+```bash
+node dist/cli.cjs \
+  --page-url "https://dexscreener.com/solana" \
+  --health-port 3000 \
+  --metrics-port 9090 \
+  --log-level info \
+  --log-format json
+```
+
+See [User Guide](./docs/GUIDE.md) for detailed monitoring setup and [API Reference](./docs/API.md) for complete API documentation.
+
+---
+
+## CLI Flags Reference
+
+### Core Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--base-url` | Apify Actor base URL | Required |
+| `--api-token` | Apify API token (or use `APIFY_TOKEN` env) | Required |
+| `--page-url` | DexScreener page URL(s) to monitor | Required |
+| `--mode` | Output mode: `stdout`, `jsonl`, `webhook` | `stdout` |
+| `--retry-ms` | Reconnection delay in milliseconds | `3000` |
+| `--keep-alive-ms` | Health check interval in milliseconds | `120000` |
+
+### Configuration Options
+
+| Flag | Description |
+|------|-------------|
+| `--init` | Generate default configuration file |
+| `--profile <name>` | Use specific configuration profile |
+| `--validate` | Validate configuration and exit |
+| `--interactive` | Launch interactive configuration wizard |
+
+### Output Options
+
+| Flag | Description |
+|------|-------------|
+| `--jsonl-path <path>` | File path for JSONL output |
+| `--webhook-url <url>` | Webhook URL for HTTP POST |
+| `--compress` | Enable gzip compression |
+| `--rotate-size <mb>` | Rotate file when size exceeds MB |
+| `--rotate-interval <interval>` | Rotate file by time: `hourly`, `daily` |
+| `--batch-size <n>` | Batch size for webhook mode |
+| `--batch-interval <ms>` | Batch interval in milliseconds |
+| `--sample-rate <percent>` | Sample rate percentage (0-100) |
+
+### Monitoring Options
+
+| Flag | Description |
+|------|-------------|
+| `--health-port <port>` | HTTP health check endpoint port |
+| `--metrics-port <port>` | Prometheus metrics endpoint port |
+| `--log-level <level>` | Log level: `error`, `warn`, `info`, `debug` |
+| `--log-format <format>` | Log format: `text`, `json` |
+| `--perf` | Enable performance monitoring |
+| `--verbose` | Verbose output mode |
+| `--quiet` | Quiet mode (errors only) |
+| `--debug` | Debug mode with detailed diagnostics |
+
+---
+
+## Documentation
+
+- **[User Guide](./docs/GUIDE.md)** - Complete tutorials, examples, and best practices
+- **[API Reference](./docs/API.md)** - Technical reference for all classes and methods
+- **[Examples](./examples/)** - Working code examples
+  - [Basic SDK Usage](./examples/basic-sdk.ts)
+  - [Multi-Stream Setup](./examples/multi-stream.ts)
+  - [Filtering](./examples/filtering.ts)
+  - [Transformation](./examples/transformation.ts)
+  - [Custom Retry Logic](./examples/custom-retry.ts)
+  - [Graceful Shutdown](./examples/graceful-shutdown.ts)
+
+---
 
 ## Development
 

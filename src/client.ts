@@ -14,7 +14,36 @@ const DEFAULT_KEEP_ALIVE_MS = 120000; // 2 minutes
 
 /**
  * SSE stream client for consuming DexScreener realtime data.
+ * 
  * Handles connection lifecycle, automatic reconnection, and event callbacks.
+ * Supports keep-alive functionality to maintain long-running connections.
+ * 
+ * @example
+ * ```typescript
+ * const stream = new DexScreenerStream({
+ *   baseUrl: 'https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor',
+ *   pageUrl: 'https://dexscreener.com/solana',
+ *   apiToken: process.env.APIFY_TOKEN!,
+ *   streamId: 'solana-stream',
+ *   onBatch: (event, ctx) => {
+ *     console.log(`Received ${event.pairs.length} pairs`);
+ *   },
+ *   onPair: (pair, ctx) => {
+ *     console.log(`${pair.baseToken.symbol}: $${pair.priceUsd}`);
+ *   },
+ *   onError: (error, ctx) => {
+ *     console.error('Stream error:', error);
+ *   },
+ *   onStateChange: (state, ctx) => {
+ *     console.log('Connection state:', state);
+ *   }
+ * });
+ * 
+ * stream.start();
+ * 
+ * // Later, stop the stream
+ * stream.stop();
+ * ```
  */
 export class DexScreenerStream {
   private eventSource: EventSource | null = null;
@@ -35,6 +64,24 @@ export class DexScreenerStream {
   private readonly onError?: (error: unknown, ctx: StreamContext) => void;
   private readonly onStateChange?: (state: ConnectionState, ctx: StreamContext) => void;
 
+  /**
+   * Creates a new DexScreenerStream instance.
+   * 
+   * @param options - Stream configuration options
+   * @param options.baseUrl - Apify Actor base URL (e.g., 'https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor')
+   * @param options.pageUrl - Page URL to monitor (e.g., 'https://dexscreener.com/solana')
+   * @param options.apiToken - Apify API token for authentication
+   * @param options.streamId - Optional unique identifier for this stream
+   * @param options.retryMs - Milliseconds to wait before reconnecting after error (default: 3000)
+   * @param options.keepAliveMs - Milliseconds between keep-alive pings (default: 120000)
+   * @param options.onBatch - Callback invoked when a batch of pairs is received
+   * @param options.onPair - Callback invoked for each individual pair in a batch
+   * @param options.onError - Callback invoked when an error occurs
+   * @param options.onStateChange - Callback invoked when connection state changes
+   * 
+   * @throws Error if baseUrl or pageUrl are invalid HTTPS URLs
+   * @throws Error if apiToken is empty or missing
+   */
   constructor(options: DexStreamOptions) {
     validateUrls(options.baseUrl, options.pageUrl);
     
@@ -54,7 +101,18 @@ export class DexScreenerStream {
     this.onStateChange = options.onStateChange;
   }
 
-  /** Starts the SSE connection and begins receiving events. */
+  /**
+   * Starts the SSE connection and begins receiving events.
+   * 
+   * Establishes connection to the DexScreener API, sets up event handlers,
+   * and begins processing realtime trading pair updates. Automatically
+   * reconnects on connection loss unless explicitly stopped.
+   * 
+   * @example
+   * ```typescript
+   * stream.start();
+   * ```
+   */
   start(): void {
     this.closed = false;
     this.cancelReconnect();
@@ -69,7 +127,8 @@ export class DexScreenerStream {
           ...init,
           headers: {
             ...init.headers,
-            'Authorization': `Bearer ${this.apiToken}`
+            'Authorization': `Bearer ${this.apiToken}`,
+            'Accept-Encoding': 'gzip, deflate, br'
           }
         });
       }
@@ -102,7 +161,18 @@ export class DexScreenerStream {
     };
   }
 
-  /** Stops the connection and cleans up resources. */
+  /**
+   * Stops the connection and cleans up resources.
+   * 
+   * Closes the SSE connection, cancels any pending reconnection attempts,
+   * stops keep-alive pings, and sets connection state to disconnected.
+   * After calling stop(), the stream will not automatically reconnect.
+   * 
+   * @example
+   * ```typescript
+   * stream.stop();
+   * ```
+   */
   stop(): void {
     this.closed = true;
     this.cancelReconnect();
@@ -116,7 +186,17 @@ export class DexScreenerStream {
     this.setConnectionState('disconnected');
   }
 
-  /** Returns the current connection state. */
+  /**
+   * Returns the current connection state.
+   * 
+   * @returns Current connection state: 'disconnected', 'connecting', 'connected', or 'reconnecting'
+   * 
+   * @example
+   * ```typescript
+   * const state = stream.getState();
+   * console.log('Current state:', state);
+   * ```
+   */
   getState(): ConnectionState {
     return this.connectionState;
   }

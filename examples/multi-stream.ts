@@ -29,7 +29,7 @@ if (!baseUrl) {
 
 if (!apiToken) {
   console.error('Error: APIFY_TOKEN environment variable is required');
-  console.error('Get your token from: https://console.apify.com/settings/integrations?fpr=muh');
+  console.error('Get your token from: https://console.apify.com/settings/integrations?fpr=muh?fpr=muh');
   process.exit(1);
 }
 
@@ -37,6 +37,7 @@ const multi = new DexScreenerMultiStream({
   baseUrl,
   apiToken,
   retryMs: 3000,
+  keepAliveMs: 120000, // Keep connections alive
   
   streams: [
     {
@@ -53,26 +54,65 @@ const multi = new DexScreenerMultiStream({
     },
   ],
   
+  // Called when any stream receives a batch
   onBatch: (event, { streamId }) => {
     console.log(`[${streamId}] Received batch with ${event.pairs?.length ?? 0} pairs`);
+    
+    // You can handle different streams differently
+    if (streamId === 'solana-trending' && event.stats) {
+      console.log(`[${streamId}] Solana stats:`, event.stats);
+    }
   },
   
+  // Called for each pair from any stream
   onPair: (pair, { streamId }) => {
     const baseSymbol = pair.baseToken?.symbol ?? 'UNKNOWN';
     const quoteSymbol = pair.quoteToken?.symbol ?? 'UNKNOWN';
     const priceUsd = pair.priceUsd ?? 'N/A';
+    const volume24h = pair.volume?.h24 ?? 'N/A';
     
     console.log(
-      `[${streamId}] ${baseSymbol}/${quoteSymbol} priceUsd=${priceUsd}`
+      `[${streamId}] ${baseSymbol}/${quoteSymbol} ` +
+      `price=$${priceUsd} vol24h=$${volume24h}`
     );
   },
   
+  // Called when any stream encounters an error
   onError: (error, { streamId }) => {
     console.error(`[${streamId}] Stream error:`, error);
+    
+    // Handle errors per stream
+    if (error instanceof Error) {
+      if (error.message.includes('Authentication')) {
+        console.error(`[${streamId}] ⚠️  Authentication failed - check APIFY_TOKEN`);
+        // Could stop just this stream: multi.getStream(streamId)?.stop();
+      } else if (error.message.includes('Network')) {
+        console.error(`[${streamId}] ⚠️  Network error - will retry automatically`);
+      } else {
+        console.error(`[${streamId}] ⚠️  Unexpected error:`, error.message);
+      }
+    }
   },
   
+  // Called when any stream's connection state changes
   onStateChange: (state, { streamId }) => {
-    console.log(`[${streamId}] Connection state: ${state}`);
+    const stateEmoji = {
+      disconnected: '⚫',
+      connecting: '🟡',
+      connected: '🟢',
+      reconnecting: '🟠',
+    };
+    
+    console.log(`[${streamId}] ${stateEmoji[state]} State: ${state}`);
+    
+    // Track overall health
+    const allStreams = multi.getStreamIds();
+    const connectedCount = allStreams.filter(id => {
+      const stream = multi.getStream(id);
+      return stream?.getState() === 'connected';
+    }).length;
+    
+    console.log(`Overall: ${connectedCount}/${allStreams.length} streams connected`);
   },
 });
 

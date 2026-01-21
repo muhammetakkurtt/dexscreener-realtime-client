@@ -190,3 +190,160 @@ export type CliOutputEvent = {
   timestamp: number;
   event: DexEvent;
 };
+
+/** CLI output mode. */
+export type CliMode = 'stdout' | 'jsonl' | 'webhook';
+
+/** Log level for structured logging. */
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+
+/** Filter configuration. */
+export type FilterConfig = {
+  type: 'chain' | 'liquidity' | 'volume' | 'priceChange' | 'symbol' | 'custom';
+  params: Record<string, unknown>;
+};
+
+/** Context passed to filter functions. */
+export type FilterContext = {
+  pair: Pair;
+  event: DexEvent;
+  streamId: string;
+};
+
+/** Filter function type that tests if a pair matches criteria. */
+export type FilterFunction = (ctx: FilterContext) => boolean;
+
+/** Computed field configuration. */
+export type ComputedField = {
+  name: string;
+  expression: string | ((pair: Pair) => unknown);
+};
+
+/** Transform configuration. */
+export type TransformConfig = {
+  fields?: string[];
+  aliases?: Record<string, string>;
+  computed?: ComputedField[];
+};
+
+/** Compression configuration. */
+export type CompressionConfig = {
+  enabled: boolean;
+  level?: number;
+};
+
+/** Rotation configuration. */
+export type RotationConfig = {
+  maxSizeMB?: number;
+  interval?: 'hourly' | 'daily';
+  keepFiles?: number;
+};
+
+/** Batch configuration. */
+export type BatchConfig = {
+  maxSize: number;
+  maxWaitMs: number;
+};
+
+/** Throttle configuration. */
+export type ThrottleConfig = {
+  maxPerSecond: number;
+  dropStrategy: 'oldest' | 'newest' | 'random';
+};
+
+/** Alert configuration. */
+export type AlertConfig = {
+  metric: string;
+  threshold: number;
+  comparison: 'lt' | 'gt' | 'eq';
+};
+
+/** Output configuration. */
+export type OutputConfig = {
+  compression?: CompressionConfig;
+  rotation?: RotationConfig;
+  batching?: BatchConfig;
+  throttling?: ThrottleConfig;
+  sampling?: { rate: number };
+};
+
+/** Monitoring configuration. */
+export type MonitoringConfig = {
+  healthPort?: number;
+  metricsPort?: number;
+  logLevel?: LogLevel;
+  logFormat?: 'text' | 'json';
+  performance?: boolean;
+  alerts?: AlertConfig[];
+};
+
+/** Configuration profile. */
+export type ConfigProfile = {
+  name: string;
+  baseUrl: string;
+  apiToken?: string;
+  pageUrls: string[];
+  mode?: CliMode;
+  filters?: FilterConfig[];
+  transforms?: TransformConfig;
+  output?: OutputConfig;
+  monitoring?: MonitoringConfig;
+};
+
+/** Main configuration object. */
+export type DexConfig = {
+  profiles?: Record<string, ConfigProfile>;
+  default?: string;
+  baseUrl?: string;
+  apiToken?: string;
+  pageUrls?: string[];
+  mode?: CliMode;
+  filters?: FilterConfig[];
+  transforms?: TransformConfig;
+  output?: OutputConfig;
+  monitoring?: MonitoringConfig;
+};
+
+/** Aggregated statistics from events. */
+export type AggregateStats = {
+  timestamp: string;
+  streamId: string;
+  eventStats: DexEventStats;
+  totalPairs: number;
+  uniqueChains: number;
+  uniqueDexs: number;
+  topChains: Array<{ chain: string; count: number }>;
+  topDexs: Array<{ dex: string; count: number }>;
+};
+
+/** Metrics interface for monitoring. */
+export type Metrics = {
+  eventsReceived: {
+    inc: (labels: { streamId: string }, value?: number) => void;
+  };
+  pairsProcessed: {
+    inc: (labels: { streamId: string }, value?: number) => void;
+  };
+  eventProcessingDuration: {
+    observe: (labels: { streamId: string }, value: number) => void;
+  };
+  connectionState: {
+    set: (labels: { streamId: string }, value: number) => void;
+  };
+  eventsPerSecond: {
+    set: (labels: { streamId: string }, value: number) => void;
+  };
+  memoryUsage: {
+    set: (value: number) => void;
+  };
+};
+
+/** Display metrics for CLI visual feedback. */
+export type DisplayMetrics = {
+  eventsPerSecond: number;
+  dataRateMBps: number;
+  totalEvents: number;
+  totalPairs: number;
+  uptimeSeconds: number;
+  connectionStates: Record<string, ConnectionState>;
+};

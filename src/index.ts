@@ -15,6 +15,12 @@ export type {
   DexStreamOptions,
   MultiStreamConfig,
   CliOutputEvent,
+  FilterConfig,
+  FilterContext,
+  FilterFunction,
+  TransformConfig,
+  ComputedField,
+  AggregateStats,
 } from './types.js';
 
 export {
@@ -27,3 +33,39 @@ export {
   KeepAliveManager,
   clearManagerRegistry,
 } from './utils/keep-alive.js';
+
+export { FilterBuilder, createFilter } from './filters/index.js';
+export { Transformer, createTransformer } from './transforms/index.js';
+export { Aggregator } from './aggregators/index.js';
+export { ProcessingPipeline } from './pipeline/index.js';
+export type { PipelineContext, PipelineResult, PipelineConfig } from './pipeline/index.js';
+
+export {
+  MetricsCollector,
+  HealthChecker,
+  StructuredLogger,
+  PerformanceMonitor,
+  AlertMonitor,
+} from './monitoring/index.js';
+export type {
+  StreamHealth,
+  HealthStatus,
+  LogEntry,
+  PerformanceStats,
+  PerformanceMetrics,
+} from './monitoring/index.js';
+
+export {
+  Compressor,
+  FileRotator,
+  Batcher,
+  Throttler,
+  Sampler,
+} from './output/index.js';
+export type {
+  CompressionConfig,
+  RotationConfig,
+  BatchConfig,
+  ThrottleConfig,
+  SamplingConfig,
+} from './output/index.js';

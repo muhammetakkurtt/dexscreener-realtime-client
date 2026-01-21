@@ -40,36 +40,79 @@ const stream = new DexScreenerStream({
   pageUrl,
   streamId: 'solana-trending',
   retryMs: 3000,
+  keepAliveMs: 120000, // Keep connection alive with pings every 2 minutes
   
+  // Called when a batch of pairs is received
   onBatch: (event, { streamId }) => {
     console.log(`[${streamId}] Received batch with ${event.pairs?.length ?? 0} pairs`);
+    
+    // Event statistics provide aggregate data about the batch
     if (event.stats) {
       console.log(`[${streamId}] Stats:`, JSON.stringify(event.stats, null, 2));
     }
+    
+    // You can process the entire batch here
+    // For example, filter pairs or aggregate data
+    const highVolumePairs = event.pairs?.filter(p => 
+      (p.volume?.h24 ?? 0) > 100000
+    ) ?? [];
+    
+    if (highVolumePairs.length > 0) {
+      console.log(`[${streamId}] Found ${highVolumePairs.length} high-volume pairs (>$100k 24h)`);
+    }
   },
   
+  // Called for each individual pair in the batch
   onPair: (pair, { streamId }) => {
     const baseSymbol = pair.baseToken?.symbol ?? 'UNKNOWN';
     const quoteSymbol = pair.quoteToken?.symbol ?? 'UNKNOWN';
     const priceUsd = pair.priceUsd ?? 'N/A';
     const volume1h = pair.volume?.h1 ?? 'N/A';
     const change1h = pair.priceChange?.h1 ?? 'N/A';
+    const liquidity = pair.liquidity?.usd ?? 'N/A';
     
     console.log(
       `[${streamId}] ${pair.chainId}/${pair.dexId} ` +
       `${baseSymbol}/${quoteSymbol} ` +
       `priceUsd=${priceUsd} ` +
       `vol.h1=${volume1h} ` +
-      `ch.h1=${change1h}%`
+      `ch.h1=${change1h}% ` +
+      `liq=${liquidity}`
     );
   },
   
+  // Called when an error occurs (network issues, parsing errors, etc.)
   onError: (error, { streamId }) => {
     console.error(`[${streamId}] Stream error:`, error);
+    
+    // You can implement custom error handling here
+    // For example, send alerts, log to external service, etc.
+    if (error instanceof Error) {
+      if (error.message.includes('Authentication failed')) {
+        console.error('⚠️  Check your APIFY_TOKEN - authentication failed');
+      } else if (error.message.includes('Network')) {
+        console.error('⚠️  Network issue detected - stream will retry automatically');
+      }
+    }
   },
   
+  // Called when connection state changes
   onStateChange: (state, { streamId }) => {
-    console.log(`[${streamId}] Connection state: ${state}`);
+    const stateEmoji = {
+      disconnected: '⚫',
+      connecting: '🟡',
+      connected: '🟢',
+      reconnecting: '🟠',
+    };
+    
+    console.log(`[${streamId}] ${stateEmoji[state]} Connection state: ${state}`);
+    
+    // You can track connection health here
+    if (state === 'connected') {
+      console.log(`[${streamId}] ✓ Stream is now active and receiving data`);
+    } else if (state === 'reconnecting') {
+      console.log(`[${streamId}] ⟳ Attempting to reconnect...`);
+    }
   },
 });
 
