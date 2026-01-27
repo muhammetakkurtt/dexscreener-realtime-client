@@ -12,7 +12,7 @@ export default defineConfig([
   },
   {
     entry: ['src/cli.ts'],
-    format: ['esm'],
+    format: ['esm', 'cjs'],
     sourcemap: true,
     splitting: false,
     treeshake: true,
