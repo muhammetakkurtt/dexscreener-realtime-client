@@ -63,7 +63,12 @@ function processMessage(
   },
   streamId?: string
 ): { success: boolean; event?: DexEvent; error?: unknown } {
-  const ctx: StreamContext = { streamId };
+  // Generate a streamId if not provided, matching the client behavior
+  const actualStreamId = streamId ?? crypto.randomUUID();
+  const ctx: StreamContext = { 
+    streamId: actualStreamId,
+    state: 'connected'
+  };
   
   try {
     const parsed = JSON.parse(data);
@@ -169,7 +174,13 @@ describe('onBatch Callback Invocation', () => {
         expect(receivedEvent).toBeDefined();
         expect(receivedEvent!.pairs).toEqual(event.pairs);
         expect(receivedContext).toBeDefined();
-        expect(receivedContext!.streamId).toBe(streamId);
+        // streamId should match if provided, or be auto-generated if not
+        if (streamId !== undefined) {
+          expect(receivedContext!.streamId).toBe(streamId);
+        } else {
+          expect(receivedContext!.streamId).toBeDefined();
+          expect(typeof receivedContext!.streamId).toBe('string');
+        }
       }),
       { numRuns: 100 }
     );
@@ -199,7 +210,13 @@ describe('onPair Callback Count', () => {
         expect(receivedPairs.length).toBe(event.pairs.length);
         
         for (const ctx of receivedContexts) {
-          expect(ctx.streamId).toBe(streamId);
+          // streamId should match if provided, or be auto-generated if not
+          if (streamId !== undefined) {
+            expect(ctx.streamId).toBe(streamId);
+          } else {
+            expect(ctx.streamId).toBeDefined();
+            expect(typeof ctx.streamId).toBe('string');
+          }
         }
       }),
       { numRuns: 100 }
@@ -268,7 +285,13 @@ describe('Invalid JSON Error Handling', () => {
         expect(result.success).toBe(false);
         expect(receivedError).toBeInstanceOf(SyntaxError);
         expect(receivedContext).toBeDefined();
-        expect(receivedContext!.streamId).toBe(streamId);
+        // streamId should match if provided, or be auto-generated if not
+        if (streamId !== undefined) {
+          expect(receivedContext!.streamId).toBe(streamId);
+        } else {
+          expect(receivedContext!.streamId).toBeDefined();
+          expect(typeof receivedContext!.streamId).toBe('string');
+        }
       }),
       { numRuns: 100 }
     );

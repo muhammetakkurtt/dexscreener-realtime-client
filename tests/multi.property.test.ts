@@ -20,6 +20,7 @@ const multiStreamConfigArb = fc.record({
   apiToken: fc.string({ minLength: 10, maxLength: 50 }),
   streams: uniqueStreamConfigsArb(1, 10),
   retryMs: fc.option(fc.integer({ min: 100, max: 60000 }), { nil: undefined }),
+  authMode: fc.option(fc.constantFrom('auto', 'header', 'query', 'both'), { nil: undefined }),
 });
 
 describe('MultiStream Instance Count', () => {
@@ -149,6 +150,48 @@ describe('StreamId Context Correctness', () => {
           }
         }
       ),
+      { numRuns: 100 }
+    );
+  });
+});
+
+describe('AuthMode Configuration', () => {
+  it('should accept all valid authMode values', () => {
+    fc.assert(
+      fc.property(
+        fc.webUrl(),
+        fc.string({ minLength: 10 }),
+        fc.constantFrom('auto', 'header', 'query', 'both', undefined),
+        streamConfigArb,
+        (baseUrl, apiToken, authMode, streamConfig) => {
+          const config: MultiStreamConfig = {
+            baseUrl,
+            apiToken,
+            authMode,
+            streams: [streamConfig],
+          };
+          // Should not throw
+          const multiStream = new DexScreenerMultiStream(config);
+          expect(multiStream.getStreamCount()).toBe(1);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should create streams with consistent authMode across all streams', () => {
+    fc.assert(
+      fc.property(multiStreamConfigArb, (config) => {
+        // Should not throw - all streams should accept the same authMode
+        const multiStream = new DexScreenerMultiStream(config);
+        expect(multiStream.getStreamCount()).toBe(config.streams.length);
+        
+        // Verify all streams were created
+        for (const streamConfig of config.streams) {
+          const stream = multiStream.getStream(streamConfig.id);
+          expect(stream).toBeDefined();
+        }
+      }),
       { numRuns: 100 }
     );
   });

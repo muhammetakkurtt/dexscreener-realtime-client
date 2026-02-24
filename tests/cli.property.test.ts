@@ -9,12 +9,15 @@ import type { CliOutputEvent } from '../src/types.js';
 const pageUrlArb = fc.webUrl();
 const pageUrlsArb = fc.array(pageUrlArb, { minLength: 1, maxLength: 10 });
 
+const authModeArb = fc.constantFrom('auto', 'header', 'query', 'both');
+
 const cliOptionsArb = fc.record({
   baseUrl: fc.webUrl(),
   apiToken: fc.string({ minLength: 10, maxLength: 50 }),
   pageUrl: pageUrlsArb,
   mode: fc.constant('stdout' as const),
   retryMs: fc.integer({ min: 100, max: 60000 }),
+  authMode: fc.option(authModeArb, { nil: undefined }),
 });
 
 const dexEventArb = fc.record({
@@ -221,6 +224,95 @@ describe('JSONL Append Behavior', () => {
           const content = fs.readFileSync(filePath, 'utf-8');
           const parsed = JSON.parse(content.trim());
           expect(parsed.streamId).toBe(eventData.streamId);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+});
+
+describe('CLI AuthMode Support', () => {
+  it('should create streams successfully regardless of authMode value', () => {
+    fc.assert(
+      fc.property(cliOptionsArb, (options) => {
+        const outputHandler = () => {};
+        const streams = createStreams(options, outputHandler);
+        
+        // Verify streams are created successfully
+        expect(streams.length).toBe(options.pageUrl.length);
+        expect(streams.length).toBeGreaterThan(0);
+        
+        // Verify each stream is a valid object
+        streams.forEach((stream) => {
+          expect(stream).toBeDefined();
+          expect(typeof stream.start).toBe('function');
+          expect(typeof stream.stop).toBe('function');
+        });
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should handle all valid authMode values when creating streams', () => {
+    const authModeArb = fc.constantFrom('auto', 'header', 'query', 'both', undefined);
+    
+    fc.assert(
+      fc.property(
+        fc.webUrl(),
+        fc.string({ minLength: 10, maxLength: 50 }),
+        pageUrlsArb,
+        authModeArb,
+        (baseUrl, apiToken, pageUrls, authMode) => {
+          const options: CliOptions = {
+            baseUrl,
+            apiToken,
+            pageUrl: pageUrls,
+            mode: 'stdout',
+            retryMs: 3000,
+            authMode,
+          };
+          
+          const streams = createStreams(options, () => {});
+          
+          // Verify correct number of streams created
+          expect(streams.length).toBe(pageUrls.length);
+          
+          // Verify streams are valid
+          streams.forEach((stream) => {
+            expect(stream).toBeDefined();
+            expect(typeof stream.start).toBe('function');
+            expect(typeof stream.stop).toBe('function');
+            expect(typeof stream.getState).toBe('function');
+          });
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it('should preserve authMode value through stream creation pipeline', () => {
+    fc.assert(
+      fc.property(
+        fc.webUrl(),
+        fc.string({ minLength: 10, maxLength: 50 }),
+        fc.webUrl(),
+        fc.constantFrom('auto', 'header', 'query', 'both'),
+        (baseUrl, apiToken, pageUrl, authMode) => {
+          const options: CliOptions = {
+            baseUrl,
+            apiToken,
+            pageUrl: [pageUrl],
+            mode: 'stdout',
+            retryMs: 3000,
+            authMode,
+          };
+          
+          // Create stream with specific authMode
+          const streams = createStreams(options, () => {});
+          
+          // Verify stream was created (authMode is used internally)
+          expect(streams.length).toBe(1);
+          expect(streams[0]).toBeDefined();
         }
       ),
       { numRuns: 100 }

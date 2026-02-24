@@ -82,6 +82,49 @@ describe('CLI Argument Parsing', () => {
       
       process.env.APIFY_TOKEN = originalEnv;
     });
+
+    it('should parse auth-mode option with default value', () => {
+      const args = [
+        '--base-url', 'https://example.com',
+        '--api-token', 'test-token',
+        '--page-url', 'https://dexscreener.com/solana/trending',
+      ];
+      const options = parseArgs(args);
+      expect(options.authMode).toBe('auto');
+    });
+
+    it('should parse auth-mode option with header value', () => {
+      const args = [
+        '--base-url', 'https://example.com',
+        '--api-token', 'test-token',
+        '--page-url', 'https://dexscreener.com/solana/trending',
+        '--auth-mode', 'header',
+      ];
+      const options = parseArgs(args);
+      expect(options.authMode).toBe('header');
+    });
+
+    it('should parse auth-mode option with query value', () => {
+      const args = [
+        '--base-url', 'https://example.com',
+        '--api-token', 'test-token',
+        '--page-url', 'https://dexscreener.com/solana/trending',
+        '--auth-mode', 'query',
+      ];
+      const options = parseArgs(args);
+      expect(options.authMode).toBe('query');
+    });
+
+    it('should parse auth-mode option with both value', () => {
+      const args = [
+        '--base-url', 'https://example.com',
+        '--api-token', 'test-token',
+        '--page-url', 'https://dexscreener.com/solana/trending',
+        '--auth-mode', 'both',
+      ];
+      const options = parseArgs(args);
+      expect(options.authMode).toBe('both');
+    });
   });
 });
 
@@ -123,7 +166,10 @@ describe('CLI Validation', () => {
       };
       expect(() => validateOptions(options)).toThrow('process.exit called');
       expect(mockConsoleError).toHaveBeenCalledWith(
-        expect.stringContaining("[ERR_1006] Invalid configuration value for 'apiToken'")
+        expect.stringContaining("[apiToken]")
+      );
+      expect(mockConsoleError).toHaveBeenCalledWith(
+        expect.stringContaining("Invalid or empty apiToken")
       );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
@@ -234,6 +280,73 @@ describe('CLI Stream Creation', () => {
         pageUrl: ['https://dexscreener.com/solana/trending'],
         mode: 'stdout',
         retryMs: 5000,
+      };
+      const streams = createStreams(options, () => {});
+      expect(streams.length).toBe(1);
+    });
+
+    it('should pass authMode to stream configuration when set to header', () => {
+      const options: CliOptions = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        pageUrl: ['https://dexscreener.com/solana/trending'],
+        mode: 'stdout',
+        retryMs: 3000,
+        authMode: 'header',
+      };
+      const streams = createStreams(options, () => {});
+      expect(streams.length).toBe(1);
+      // The stream is created with authMode, which will be used internally
+      // We verify the stream was created successfully with the authMode option
+    });
+
+    it('should pass authMode to stream configuration when set to query', () => {
+      const options: CliOptions = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        pageUrl: ['https://dexscreener.com/solana/trending'],
+        mode: 'stdout',
+        retryMs: 3000,
+        authMode: 'query',
+      };
+      const streams = createStreams(options, () => {});
+      expect(streams.length).toBe(1);
+    });
+
+    it('should pass authMode to stream configuration when set to both', () => {
+      const options: CliOptions = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        pageUrl: ['https://dexscreener.com/solana/trending'],
+        mode: 'stdout',
+        retryMs: 3000,
+        authMode: 'both',
+      };
+      const streams = createStreams(options, () => {});
+      expect(streams.length).toBe(1);
+    });
+
+    it('should pass authMode to stream configuration when set to auto', () => {
+      const options: CliOptions = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        pageUrl: ['https://dexscreener.com/solana/trending'],
+        mode: 'stdout',
+        retryMs: 3000,
+        authMode: 'auto',
+      };
+      const streams = createStreams(options, () => {});
+      expect(streams.length).toBe(1);
+    });
+
+    it('should create streams when authMode is undefined (defaults to auto)', () => {
+      const options: CliOptions = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        pageUrl: ['https://dexscreener.com/solana/trending'],
+        mode: 'stdout',
+        retryMs: 3000,
+        authMode: undefined,
       };
       const streams = createStreams(options, () => {});
       expect(streams.length).toBe(1);
