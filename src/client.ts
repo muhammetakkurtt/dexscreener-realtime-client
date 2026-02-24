@@ -1,4 +1,4 @@
-import { EventSource } from 'eventsource';
+import WebSocket from 'ws';
 import type {
   ConnectionState,
   DexEvent,
@@ -6,14 +6,16 @@ import type {
   Pair,
   StreamContext,
 } from './types.js';
-import { buildSseUrl, validateUrls } from './utils/url.js';
+import { validateUrls } from './utils/url.js';
 import { KeepAliveManager } from './utils/keep-alive.js';
+import { AuthManager } from './auth/manager.js';
+import { sanitizeErrorValue, createErrorWithContext } from './errors/sanitizer.js';
 
 const DEFAULT_RETRY_MS = 3000;
 const DEFAULT_KEEP_ALIVE_MS = 120000; // 2 minutes
 
 /**
- * SSE stream client for consuming DexScreener realtime data.
+ * WebSocket stream client for consuming DexScreener realtime data.
  * 
  * Handles connection lifecycle, automatic reconnection, and event callbacks.
  * Supports keep-alive functionality to maintain long-running connections.
@@ -46,17 +48,19 @@ const DEFAULT_KEEP_ALIVE_MS = 120000; // 2 minutes
  * ```
  */
 export class DexScreenerStream {
-  private eventSource: EventSource | null = null;
+  private ws: WebSocket | null = null;
   private closed: boolean = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private connectionState: ConnectionState = 'disconnected';
   private keepAliveManager: KeepAliveManager | null = null;
   private keepAliveStreamKey: string | null = null;
+  private authManager: AuthManager;
+  private authFailedNoFallback: boolean = false;
 
   private readonly baseUrl: string;
   private readonly pageUrl: string;
   private readonly apiToken: string;
-  private readonly streamId?: string;
+  private readonly streamId: string;
   private readonly retryMs: number;
   private readonly keepAliveMs?: number;
   private readonly onBatch?: (event: DexEvent, ctx: StreamContext) => void;
@@ -72,6 +76,7 @@ export class DexScreenerStream {
    * @param options.pageUrl - Page URL to monitor (e.g., 'https://dexscreener.com/solana')
    * @param options.apiToken - Apify API token for authentication
    * @param options.streamId - Optional unique identifier for this stream
+   * @param options.authMode - Authentication mode: 'auto' (default), 'header', 'query', or 'both'
    * @param options.retryMs - Milliseconds to wait before reconnecting after error (default: 3000)
    * @param options.keepAliveMs - Milliseconds between keep-alive pings (default: 120000)
    * @param options.onBatch - Callback invoked when a batch of pairs is received
@@ -79,7 +84,7 @@ export class DexScreenerStream {
    * @param options.onError - Callback invoked when an error occurs
    * @param options.onStateChange - Callback invoked when connection state changes
    * 
-   * @throws Error if baseUrl or pageUrl are invalid HTTPS URLs
+   * @throws Error if baseUrl or pageUrl are invalid URLs
    * @throws Error if apiToken is empty or missing
    */
   constructor(options: DexStreamOptions) {
@@ -92,21 +97,34 @@ export class DexScreenerStream {
     this.baseUrl = options.baseUrl;
     this.pageUrl = options.pageUrl;
     this.apiToken = options.apiToken;
-    this.streamId = options.streamId;
+    this.streamId = options.streamId ?? crypto.randomUUID();
     this.retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
     this.keepAliveMs = options.keepAliveMs ?? DEFAULT_KEEP_ALIVE_MS;
     this.onBatch = options.onBatch;
     this.onPair = options.onPair;
     this.onError = options.onError;
     this.onStateChange = options.onStateChange;
+
+    // Initialize AuthManager with token and authMode
+    this.authManager = new AuthManager(
+      this.apiToken,
+      options.authMode ?? 'auto',
+      this.baseUrl,
+      this.pageUrl
+    );
   }
 
   /**
-   * Starts the SSE connection and begins receiving events.
+   * Starts the WebSocket connection and begins receiving events.
    * 
    * Establishes connection to the DexScreener API, sets up event handlers,
    * and begins processing realtime trading pair updates. Automatically
    * reconnects on connection loss unless explicitly stopped.
+   * 
+   * Security:
+   * - Uses Bearer token format for Authorization header
+   * - Excludes token from URL for auto/header modes
+   * - Validates server certificates for WSS connections (default behavior)
    * 
    * @example
    * ```typescript
@@ -115,56 +133,27 @@ export class DexScreenerStream {
    */
   start(): void {
     this.closed = false;
+    this.authFailedNoFallback = false;
     this.cancelReconnect();
+    this.authManager.reset();
 
-    const sseUrl = buildSseUrl(this.baseUrl, this.pageUrl);
+    const { url, headers } = this.authManager.getConnectionOptions();
     this.setConnectionState('connecting');
     this.startKeepAlive();
 
-    this.eventSource = new EventSource(sseUrl, {
-      fetch: (url, init) => {
-        return fetch(url, {
-          ...init,
-          headers: {
-            ...init.headers,
-            'Authorization': `Bearer ${this.apiToken}`,
-            'Accept-Encoding': 'gzip, deflate, br'
-          }
-        });
-      }
-    });
+    // WebSocket with certificate validation enabled (default for wss://)
+    this.ws = new WebSocket(url, { headers });
 
-    this.eventSource.onopen = () => {};
-
-    this.eventSource.addEventListener('connected', () => {
-      this.setConnectionState('connected');
-    });
-
-    this.eventSource.addEventListener('ping', () => {
-      /** Ping received, connection is alive - no action needed */
-    });
-
-    this.eventSource.addEventListener('shutdown', (event: MessageEvent) => {
-      this.handleShutdown(event);
-    });
-
-    this.eventSource.addEventListener('pairs', (event: MessageEvent) => {
-      this.handleMessage(event);
-    });
-
-    this.eventSource.onmessage = (event: MessageEvent) => {
-      this.handleMessage(event);
-    };
-
-    this.eventSource.onerror = (error: Event) => {
-      this.handleError(error);
-    };
+    this.ws.on('open', () => this.handleOpen());
+    this.ws.on('message', (data: WebSocket.Data) => this.handleMessage(data));
+    this.ws.on('error', (error: Error) => this.handleError(error));
+    this.ws.on('close', (code: number, reason: Buffer) => this.handleClose(code, reason.toString()));
   }
 
   /**
    * Stops the connection and cleans up resources.
    * 
-   * Closes the SSE connection, cancels any pending reconnection attempts,
+   * Closes the WebSocket connection, cancels any pending reconnection attempts,
    * stops keep-alive pings, and sets connection state to disconnected.
    * After calling stop(), the stream will not automatically reconnect.
    * 
@@ -178,9 +167,9 @@ export class DexScreenerStream {
     this.cancelReconnect();
     this.stopKeepAlive();
     
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
     }
 
     this.setConnectionState('disconnected');
@@ -202,7 +191,10 @@ export class DexScreenerStream {
   }
 
   private getContext(): StreamContext {
-    return { streamId: this.streamId };
+    return { 
+      streamId: this.streamId,
+      state: this.connectionState
+    };
   }
 
   private setConnectionState(state: ConnectionState): void {
@@ -210,9 +202,13 @@ export class DexScreenerStream {
     this.onStateChange?.(state, this.getContext());
   }
 
-  private handleMessage(event: MessageEvent): void {
+  private handleOpen(): void {
+    // WebSocket connection opened, waiting for 'connected' event from server
+  }
+
+  private handleMessage(data: WebSocket.Data): void {
     try {
-      const raw = JSON.parse(event.data);
+      const raw = JSON.parse(data.toString());
 
       if (raw.event_type === 'connected') {
         this.setConnectionState('connected');
@@ -220,6 +216,13 @@ export class DexScreenerStream {
       }
 
       if (raw.event_type === 'ping' || raw.ping) {
+        return;
+      }
+
+      // Handle error messages from server
+      if (raw.event_type === 'error') {
+        const sanitizedMessage = sanitizeErrorValue(raw.message || 'Server error');
+        this.onError?.(new Error(sanitizedMessage), this.getContext());
         return;
       }
 
@@ -236,7 +239,9 @@ export class DexScreenerStream {
         this.processEvent(dexEvent);
       }
     } catch (error) {
-      this.onError?.(error, this.getContext());
+      // JSON parse error - invoke onError but keep connection open
+      const sanitizedError = createErrorWithContext(error, this.connectionState, 'protocol');
+      this.onError?.(new Error(sanitizedError), this.getContext());
     }
   }
 
@@ -251,72 +256,152 @@ export class DexScreenerStream {
     }
   }
 
-  private handleShutdown(event: MessageEvent): void {
-    try {
-      const data = JSON.parse(event.data);
-      const message = data.message || 'Server shutting down';
+  private handleError(error: Error): void {
+    // Check for HTTP 401/403 errors during WebSocket upgrade
+    const errorMessage = error.message || '';
+    const isUpgradeAuthError = (
+      /\b401\b/.test(errorMessage) ||
+      /\b403\b/.test(errorMessage) ||
+      errorMessage.toLowerCase().includes('unauthorized') ||
+      errorMessage.toLowerCase().includes('forbidden')
+    );
+
+    // Attempt authentication fallback if this is an upgrade auth error
+    if (isUpgradeAuthError && this.authManager.shouldAttemptFallback(undefined, errorMessage)) {
+      const sanitizedMessage = `Auth failed during upgrade with ${this.authManager.getMode()}, retrying with query token`;
+      this.onError?.(
+        new Error(sanitizedMessage),
+        this.getContext()
+      );
       
-      /** Log shutdown message via error callback */
-      this.onError?.(new Error(`Server shutdown: ${message}`), this.getContext());
-    } catch {
-      this.onError?.(new Error('Server shutdown'), this.getContext());
+      // Close current WebSocket and switch to query-based auth
+      if (this.ws) {
+        this.ws.removeAllListeners();
+        this.ws.close();
+        this.ws = null;
+      }
+      
+      this.authManager.fallbackToQuery();
+      this.retryWithCurrentAuth();
+      return;
     }
 
-    /** Close current connection */
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    // Auth error but no fallback possible - treat as fatal
+    if (isUpgradeAuthError) {
+      const sanitizedReason = sanitizeErrorValue(errorMessage);
+      const errorMsg = createErrorWithContext(
+        `Authentication failed: ${sanitizedReason}`,
+        this.connectionState,
+        'auth'
+      );
+      this.onError?.(new Error(errorMsg), this.getContext());
+      
+      // Mark as auth failure to prevent reconnect
+      this.authFailedNoFallback = true;
+      
+      // Clean up
+      if (this.ws) {
+        this.ws.removeAllListeners();
+        this.ws.close();
+        this.ws = null;
+      }
+      this.stopKeepAlive();
+      this.setConnectionState('disconnected');
+      return;
     }
 
-    /** Schedule reconnect if not explicitly stopped */
+    // WebSocket error event - log error and let handleClose deal with reconnection
+    const sanitizedError = createErrorWithContext(error, this.connectionState, 'network');
+    this.onError?.(new Error(sanitizedError), this.getContext());
+  }
+
+  /**
+   * Handles WebSocket close events with authentication fallback logic.
+   * 
+   * State Transition Rules:
+   * 1. Auth error (4401/4403) + auto mode + no fallback yet → Retry with query auth
+   * 2. Auth error + fallback already attempted → Transition to 'disconnected' (no retry)
+   * 3. Auth error + non-auto mode → Transition to 'disconnected' (no retry)
+   * 4. Network error + not stopped → Transition to 'reconnecting' and schedule retry
+   * 5. Explicitly stopped → Transition to 'disconnected' (no retry)
+   * 
+   * Authentication Fallback:
+   * - Only happens in 'auto' mode
+   * - Triggered by 4401 (auth failed) or 4403 (forbidden) close codes
+   * - Attempts fallback at most once per connection cycle
+   * - Switches from header auth to query auth
+   * - Immediate retry without delay
+   * 
+   * @param code - WebSocket close code
+   * @param reason - Close reason string
+   */
+  private handleClose(code: number, reason: string): void {
+    // Check if this close is from a fatal auth error
+    if (this.authFailedNoFallback) {
+      this.authFailedNoFallback = false;
+      return; // Don't reconnect
+    }
+
+    const isAuthError = (code === 4401 || code === 4403);
+    
+    // Attempt authentication fallback if applicable
+    // This is the ONLY place where auth fallback happens
+    if (isAuthError && this.authManager.shouldAttemptFallback(code)) {
+      const sanitizedMessage = `Auth failed with ${this.authManager.getMode()}, retrying with query token`;
+      this.onError?.(
+        new Error(sanitizedMessage),
+        this.getContext()
+      );
+      // Switch to query-based auth and mark fallback as attempted
+      this.authManager.fallbackToQuery();
+      // Immediate retry with new auth method - don't call start() which would reset auth
+      this.retryWithCurrentAuth();
+      return;
+    }
+    
+    // Auth failed after fallback or no fallback available
+    // No reconnection for auth errors - user must fix token and restart manually
+    if (isAuthError) {
+      const sanitizedReason = sanitizeErrorValue(reason || 'Invalid or expired API token');
+      const errorMessage = createErrorWithContext(
+        `Authentication failed: ${sanitizedReason}`,
+        this.connectionState,
+        'auth'
+      );
+      this.onError?.(
+        new Error(errorMessage),
+        this.getContext()
+      );
+      this.stopKeepAlive();
+      this.setConnectionState('disconnected');
+      return;
+    }
+    
+    // Network error or server shutdown - schedule reconnect
+    // Automatic reconnection for recoverable errors
     if (!this.closed) {
       this.scheduleReconnect();
+    } else {
+      this.setConnectionState('disconnected');
     }
   }
 
-  private handleError(error: Event): void {
-    const errorWithCode = error as Event & { code?: number; message?: string };
-    
-    /** Check for authentication errors (401) - don't retry these */
-    if (errorWithCode.code === 401) {
-      const authError = new Error('Authentication failed: Invalid or expired API token. Please check your APIFY_TOKEN.');
-      this.onError?.(authError, this.getContext());
-      
-      if (this.eventSource) {
-        this.eventSource.close();
-        this.eventSource = null;
-      }
-      
-      this.stopKeepAlive();
-      this.setConnectionState('disconnected');
-      return;
-    }
-    
-    /** Check for other client errors (4xx) - don't retry these */
-    if (errorWithCode.code && errorWithCode.code >= 400 && errorWithCode.code < 500) {
-      const clientError = new Error(`Client error (${errorWithCode.code}): ${errorWithCode.message || 'Request failed'}`);
-      this.onError?.(clientError, this.getContext());
-      
-      if (this.eventSource) {
-        this.eventSource.close();
-        this.eventSource = null;
-      }
-      
-      this.stopKeepAlive();
-      this.setConnectionState('disconnected');
-      return;
-    }
+  private retryWithCurrentAuth(): void {
+    // Retry connection without resetting auth manager
+    this.closed = false;
+    this.authFailedNoFallback = false;
+    this.cancelReconnect();
 
-    this.onError?.(error, this.getContext());
+    const { url, headers } = this.authManager.getConnectionOptions();
+    this.setConnectionState('connecting');
 
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
+    // WebSocket with certificate validation enabled (default for wss://)
+    this.ws = new WebSocket(url, { headers });
 
-    if (!this.closed) {
-      this.scheduleReconnect();
-    }
+    this.ws.on('open', () => this.handleOpen());
+    this.ws.on('message', (data: WebSocket.Data) => this.handleMessage(data));
+    this.ws.on('error', (error: Error) => this.handleError(error));
+    this.ws.on('close', (code: number, reason: Buffer) => this.handleClose(code, reason.toString()));
   }
 
   private scheduleReconnect(): void {
@@ -346,7 +431,7 @@ export class DexScreenerStream {
     }
 
     this.keepAliveManager = KeepAliveManager.getOrCreate(this.baseUrl, this.apiToken, this.keepAliveMs);
-    this.keepAliveStreamKey = this.streamId ?? `stream-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this.keepAliveStreamKey = this.streamId;
     this.keepAliveManager.register(this.keepAliveStreamKey);
   }
 

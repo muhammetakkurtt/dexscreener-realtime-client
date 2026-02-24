@@ -213,3 +213,13 @@ export class StreamError extends DexScreenerError {
     return result;
   }
 }
+
+// Export sanitizer functions
+export {
+  sanitizeErrorMessage,
+  sanitizeError,
+  sanitizeErrorValue,
+  createErrorWithContext,
+  sanitizeUrl,
+  containsSensitiveData,
+} from './sanitizer.js';

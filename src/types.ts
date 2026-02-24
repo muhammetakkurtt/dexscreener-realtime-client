@@ -1,5 +1,18 @@
-/** Possible states of an SSE connection. */
+/** Possible states of a WebSocket connection. */
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+/** Authentication mode for WebSocket connections. */
+export type AuthMode = 'auto' | 'header' | 'query' | 'both';
+
+/** WebSocket close codes. */
+export enum WSCloseCode {
+  NORMAL_CLOSURE = 1000,
+  GOING_AWAY = 1001,
+  PROTOCOL_ERROR = 1002,
+  AUTH_FAILED = 4401,
+  FORBIDDEN = 4403,
+  RATE_LIMITED = 4429,
+}
 
 /** Price change percentages over different time periods. */
 export type PriceChange = {
@@ -139,7 +152,7 @@ export type DexEventStats = {
   [key: string]: unknown;
 };
 
-/** SSE event payload containing pairs and statistics. */
+/** WebSocket event payload containing pairs and statistics. */
 export type DexEvent = {
   stats?: DexEventStats;
   pairs?: Pair[];
@@ -150,7 +163,8 @@ export type DexEvent = {
 
 /** Context passed to event callbacks. */
 export type StreamContext = {
-  streamId?: string;
+  streamId: string;
+  state: ConnectionState;
 };
 
 /** Configuration for a single stream connection. */
@@ -161,6 +175,7 @@ export type DexStreamOptions = {
   streamId?: string;
   retryMs?: number;
   keepAliveMs?: number;
+  authMode?: AuthMode;
   onBatch?: (event: DexEvent, ctx: StreamContext) => void;
   onPair?: (pair: Pair, ctx: StreamContext) => void;
   onError?: (error: unknown, ctx: StreamContext) => void;
@@ -171,6 +186,7 @@ export type DexStreamOptions = {
 export type MultiStreamConfig = {
   baseUrl: string;
   apiToken: string;
+  authMode?: AuthMode;
   streams: Array<{
     id: string;
     pageUrl: string;

@@ -3,6 +3,7 @@ export { DexScreenerMultiStream } from './multi.js';
 
 export type {
   ConnectionState,
+  AuthMode,
   PriceChange,
   Volume,
   Liquidity,
@@ -23,9 +24,13 @@ export type {
   AggregateStats,
 } from './types.js';
 
+export { WSCloseCode } from './types.js';
+
 export {
   sanitizeBaseUrl,
-  buildSseUrl,
+  normalizeProtocol,
+  buildWsUrl,
+  buildHealthUrl,
   validateUrls,
 } from './utils/url.js';
 

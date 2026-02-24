@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+/** Schema for authentication mode. */
+export const authModeSchema = z.enum(['auto', 'header', 'query', 'both']).optional();
+
 /** Schema for CLI mode. */
 export const cliModeSchema = z.enum(['stdout', 'jsonl', 'webhook']);
 
@@ -101,4 +104,36 @@ export const dexConfigSchema = z.object({
   transforms: transformConfigSchema.optional(),
   output: outputConfigSchema.optional(),
   monitoring: monitoringConfigSchema.optional(),
+});
+
+/** Schema for DexStreamOptions. */
+export const dexStreamOptionsSchema = z.object({
+  baseUrl: z.string().min(1),
+  pageUrl: z.string().min(1),
+  apiToken: z.string().min(1),
+  streamId: z.string().optional(),
+  retryMs: z.number().int().positive().optional(),
+  keepAliveMs: z.number().int().optional(),
+  authMode: authModeSchema,
+  onBatch: z.function().optional(),
+  onPair: z.function().optional(),
+  onError: z.function().optional(),
+  onStateChange: z.function().optional(),
+});
+
+/** Schema for MultiStreamConfig. */
+export const multiStreamConfigSchema = z.object({
+  baseUrl: z.string().min(1),
+  apiToken: z.string().min(1),
+  authMode: authModeSchema,
+  streams: z.array(z.object({
+    id: z.string().min(1),
+    pageUrl: z.string().min(1),
+  })).min(1),
+  retryMs: z.number().int().positive().optional(),
+  keepAliveMs: z.number().int().optional(),
+  onBatch: z.function().optional(),
+  onPair: z.function().optional(),
+  onError: z.function().optional(),
+  onStateChange: z.function().optional(),
 });
