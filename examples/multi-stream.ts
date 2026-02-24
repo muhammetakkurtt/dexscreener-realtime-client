@@ -36,6 +36,7 @@ if (!apiToken) {
 const multi = new DexScreenerMultiStream({
   baseUrl,
   apiToken,
+  authMode: 'auto', // Applied to all streams
   retryMs: 3000,
   keepAliveMs: 120000, // Keep connections alive
   

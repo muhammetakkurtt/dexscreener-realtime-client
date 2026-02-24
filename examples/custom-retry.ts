@@ -3,7 +3,7 @@
  *
  * This example demonstrates how to implement custom retry logic
  * with exponential backoff, maximum retry attempts, and custom
- * error handling strategies.
+ * error handling strategies for WebSocket connections.
  *
  * How to run:
  * 1. Build the project first: npm run build

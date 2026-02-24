@@ -39,6 +39,7 @@ const stream = new DexScreenerStream({
   apiToken,
   pageUrl,
   streamId: 'solana-trending',
+  authMode: 'auto', // Recommended: tries header first, falls back to query on 4401
   retryMs: 3000,
   keepAliveMs: 120000, // Keep connection alive with pings every 2 minutes
   
