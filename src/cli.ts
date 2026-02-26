@@ -43,6 +43,7 @@ export interface CliOptions {
   webhookUrl?: string;
   retryMs: number;
   keepAliveMs?: number;
+  authMode?: 'auto' | 'header' | 'query' | 'both';
   compress?: boolean;
   rotateSizeMB?: number;
   rotateInterval?: 'hourly' | 'daily';
@@ -125,6 +126,12 @@ export function parseArgs(args: string[]): CliOptions {
     .option('keep-alive-ms', {
       type: 'number',
       describe: 'Health check interval in milliseconds (default: 120000, set to 0 to disable)',
+    })
+    .option('auth-mode', {
+      type: 'string',
+      choices: ['auto', 'header', 'query', 'both'] as const,
+      default: 'auto',
+      describe: 'Authentication mode: auto (header first, fallback to query), header (Authorization header only), query (URL parameter only), both (header and query)',
     })
     .option('compress', {
       type: 'boolean',
@@ -223,6 +230,7 @@ export function parseArgs(args: string[]): CliOptions {
     webhookUrl: parsed['webhook-url'],
     retryMs: parsed['retry-ms'],
     keepAliveMs: parsed['keep-alive-ms'],
+    authMode: parsed['auth-mode'] as 'auto' | 'header' | 'query' | 'both' | undefined,
     compress: parsed.compress,
     rotateSizeMB: parsed['rotate-size'],
     rotateInterval: parsed['rotate-interval'] as 'hourly' | 'daily' | undefined,
@@ -270,6 +278,7 @@ export async function loadConfig(cliArgs: CliOptions): Promise<CliOptions> {
       jsonlPath: cliArgs.jsonlPath,
       webhookUrl: cliArgs.webhookUrl,
       keepAliveMs: cliArgs.keepAliveMs,
+      authMode: cliArgs.authMode,
       compress: cliArgs.compress ?? config.output?.compression?.enabled,
       rotateSizeMB: cliArgs.rotateSizeMB ?? config.output?.rotation?.maxSizeMB,
       rotateInterval: cliArgs.rotateInterval ?? config.output?.rotation?.interval,
@@ -721,6 +730,7 @@ export function createStreams(
       streamId,
       retryMs: options.retryMs,
       keepAliveMs: options.keepAliveMs,
+      authMode: options.authMode,
       onBatch: (event: DexEvent, ctx: StreamContext) => {
         const batchStartTime = Date.now();
         const currentStreamId = ctx.streamId || streamId;

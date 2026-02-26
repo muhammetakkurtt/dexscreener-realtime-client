@@ -1,37 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DexScreenerStream } from '../src/client';
 import type { ConnectionState, Pair, StreamContext } from '../src/types';
+import type WebSocket from 'ws';
+import { KeepAliveManager } from '../src/utils/keep-alive';
 
-let mockEventSourceInstance: {
+let mockWebSocketInstance: {
   close: ReturnType<typeof vi.fn>;
-  addEventListener: ReturnType<typeof vi.fn>;
-  onopen: ((event: Event) => void) | null;
-  onmessage: ((event: MessageEvent) => void) | null;
-  onerror: ((event: Event) => void) | null;
-  _eventListeners: Map<string, ((event: MessageEvent) => void)[]>;
+  on: ReturnType<typeof vi.fn>;
+  removeAllListeners: ReturnType<typeof vi.fn>;
+  _eventHandlers: Map<string, Function>;
 };
 
-let eventSourceConstructorCalls: string[] = [];
+let webSocketConstructorCalls: Array<{ url: string; options: any }> = [];
 
-vi.mock('eventsource', () => {
+vi.mock('ws', () => {
   return {
-    EventSource: class MockEventSource {
+    default: class MockWebSocket {
       close = vi.fn();
-      onopen: ((event: Event) => void) | null = null;
-      onmessage: ((event: MessageEvent) => void) | null = null;
-      onerror: ((event: Event) => void) | null = null;
-      _eventListeners: Map<string, ((event: MessageEvent) => void)[]> = new Map();
+      removeAllListeners = vi.fn();
+      _eventHandlers: Map<string, Function> = new Map();
       
-      addEventListener = vi.fn((type: string, listener: (event: MessageEvent) => void) => {
-        if (!this._eventListeners.has(type)) {
-          this._eventListeners.set(type, []);
-        }
-        this._eventListeners.get(type)!.push(listener);
+      on = vi.fn((event: string, handler: Function) => {
+        this._eventHandlers.set(event, handler);
       });
       
-      constructor(url: string) {
-        eventSourceConstructorCalls.push(url);
-        mockEventSourceInstance = this;
+      constructor(url: string, options?: any) {
+        webSocketConstructorCalls.push({ url, options });
+        mockWebSocketInstance = this;
       }
     },
   };
@@ -55,7 +50,7 @@ describe('DexScreenerStream', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    eventSourceConstructorCalls = [];
+    webSocketConstructorCalls = [];
   });
 
   afterEach(() => {
@@ -63,18 +58,18 @@ describe('DexScreenerStream', () => {
   });
 
   describe('Connection Lifecycle', () => {
-    it('should establish EventSource connection when start() is called', () => {
+    it('should establish WebSocket connection when start() is called', () => {
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
       stream.start();
-      expect(eventSourceConstructorCalls.length).toBe(1);
-      expect(eventSourceConstructorCalls[0]).toContain('/events/dex/pairs?page_url=');
+      expect(webSocketConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls[0].url).toContain('/events/dex/pairs?page_url=');
     });
 
-    it('should close EventSource connection when stop() is called', () => {
+    it('should close WebSocket connection when stop() is called', () => {
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
       stream.start();
       stream.stop();
-      expect(mockEventSourceInstance.close).toHaveBeenCalledTimes(1);
+      expect(mockWebSocketInstance.close).toHaveBeenCalledTimes(1);
     });
 
     it('should set state to disconnected after stop()', () => {
@@ -92,11 +87,11 @@ describe('DexScreenerStream', () => {
     it('should allow restart after stop()', () => {
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
       stream.start();
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls.length).toBe(1);
       stream.stop();
-      expect(mockEventSourceInstance.close).toHaveBeenCalledTimes(1);
+      expect(mockWebSocketInstance.close).toHaveBeenCalledTimes(1);
       stream.start();
-      expect(eventSourceConstructorCalls.length).toBe(2);
+      expect(webSocketConstructorCalls.length).toBe(2);
     });
 
     it('should transition to connecting state on start()', () => {
@@ -116,10 +111,9 @@ describe('DexScreenerStream', () => {
         onStateChange: (state) => stateChanges.push(state),
       });
       stream.start();
-      const connectedEvent = new MessageEvent('message', {
-        data: JSON.stringify({ event_type: 'connected', connection_id: '123' }),
-      });
-      mockEventSourceInstance.onmessage?.(connectedEvent);
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const connectedData = Buffer.from(JSON.stringify({ event_type: 'connected', connection_id: '123' }));
+      messageHandler?.(connectedData);
       expect(stream.getState()).toBe('connected');
       expect(stateChanges).toContain('connected');
     });
@@ -134,16 +128,15 @@ describe('DexScreenerStream', () => {
         onPair: () => callOrder.push('pair'),
       });
       stream.start();
-      const pairsEvent = new MessageEvent('message', {
-        data: JSON.stringify({
-          event_type: 'pairs',
-          pairs: [
-            { chainId: 'solana', baseToken: { symbol: 'SOL' } },
-            { chainId: 'solana', baseToken: { symbol: 'BONK' } },
-          ],
-        }),
-      });
-      mockEventSourceInstance.onmessage?.(pairsEvent);
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pairsData = Buffer.from(JSON.stringify({
+        event_type: 'pairs',
+        pairs: [
+          { chainId: 'solana', baseToken: { symbol: 'SOL' } },
+          { chainId: 'solana', baseToken: { symbol: 'BONK' } },
+        ],
+      }));
+      messageHandler?.(pairsData);
       expect(callOrder[0]).toBe('batch');
       expect(callOrder.slice(1)).toEqual(['pair', 'pair']);
     });
@@ -155,15 +148,14 @@ describe('DexScreenerStream', () => {
         onPair: (pair) => receivedPairs.push(pair),
       });
       stream.start();
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
       const pairs = [
         { chainId: 'solana', baseToken: { symbol: 'SOL' } },
         { chainId: 'ethereum', baseToken: { symbol: 'ETH' } },
         { chainId: 'bsc', baseToken: { symbol: 'BNB' } },
       ];
-      const pairsEvent = new MessageEvent('message', {
-        data: JSON.stringify({ event_type: 'pairs', pairs }),
-      });
-      mockEventSourceInstance.onmessage?.(pairsEvent);
+      const pairsData = Buffer.from(JSON.stringify({ event_type: 'pairs', pairs }));
+      messageHandler?.(pairsData);
       expect(receivedPairs.length).toBe(3);
       expect(receivedPairs[0].baseToken?.symbol).toBe('SOL');
       expect(receivedPairs[1].baseToken?.symbol).toBe('ETH');
@@ -178,22 +170,187 @@ describe('DexScreenerStream', () => {
         onBatch: (_, ctx) => { receivedContext = ctx; },
       });
       stream.start();
-      const pairsEvent = new MessageEvent('message', {
-        data: JSON.stringify({ event_type: 'pairs', pairs: [] }),
-      });
-      mockEventSourceInstance.onmessage?.(pairsEvent);
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pairsData = Buffer.from(JSON.stringify({ event_type: 'pairs', pairs: [] }));
+      messageHandler?.(pairsData);
       expect(receivedContext?.streamId).toBe('test-stream');
     });
   });
 
+  describe('Stream Context', () => {
+    it('should include connection state in StreamContext', () => {
+      let receivedContext: StreamContext | undefined;
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        onBatch: (_, ctx) => { receivedContext = ctx; },
+      });
+      stream.start();
+      
+      // Trigger connected state
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const connectedData = Buffer.from(JSON.stringify({ event_type: 'connected', connection_id: '123' }));
+      messageHandler?.(connectedData);
+      
+      // Send pairs event
+      const pairsData = Buffer.from(JSON.stringify({ event_type: 'pairs', pairs: [] }));
+      messageHandler?.(pairsData);
+      
+      expect(receivedContext?.state).toBe('connected');
+    });
+
+    it('should auto-generate streamId when not provided', () => {
+      let receivedContext: StreamContext | undefined;
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        onBatch: (_, ctx) => { receivedContext = ctx; },
+      });
+      stream.start();
+      
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pairsData = Buffer.from(JSON.stringify({ event_type: 'pairs', pairs: [] }));
+      messageHandler?.(pairsData);
+      
+      expect(receivedContext?.streamId).toBeDefined();
+      expect(receivedContext?.streamId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
+
+    it('should maintain consistent context across multiple callbacks', () => {
+      const batchContexts: StreamContext[] = [];
+      const pairContexts: StreamContext[] = [];
+      
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        streamId: 'test-stream',
+        onBatch: (_, ctx) => batchContexts.push(ctx),
+        onPair: (_, ctx) => pairContexts.push(ctx),
+      });
+      stream.start();
+      
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pairsData = Buffer.from(JSON.stringify({
+        event_type: 'pairs',
+        pairs: [
+          { chainId: 'solana', baseToken: { symbol: 'SOL' } },
+          { chainId: 'ethereum', baseToken: { symbol: 'ETH' } },
+        ],
+      }));
+      messageHandler?.(pairsData);
+      
+      // All contexts should have same streamId
+      expect(batchContexts[0].streamId).toBe('test-stream');
+      expect(pairContexts[0].streamId).toBe('test-stream');
+      expect(pairContexts[1].streamId).toBe('test-stream');
+      
+      // All contexts should have same state
+      expect(batchContexts[0].state).toBe('connecting');
+      expect(pairContexts[0].state).toBe('connecting');
+      expect(pairContexts[1].state).toBe('connecting');
+      
+      // Context should be same reference within same event
+      expect(pairContexts[0]).toBe(pairContexts[1]);
+    });
+
+    it('should include correct state during state transitions', () => {
+      const stateContexts: Array<{ state: ConnectionState; ctx: StreamContext }> = [];
+      
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        onStateChange: (state, ctx) => stateContexts.push({ state, ctx }),
+      });
+      
+      stream.start();
+      expect(stateContexts[0].state).toBe('connecting');
+      expect(stateContexts[0].ctx.state).toBe('connecting');
+      
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const connectedData = Buffer.from(JSON.stringify({ event_type: 'connected', connection_id: '123' }));
+      messageHandler?.(connectedData);
+      
+      expect(stateContexts[1].state).toBe('connected');
+      expect(stateContexts[1].ctx.state).toBe('connected');
+      
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, 'Connection lost');
+      
+      expect(stateContexts[2].state).toBe('reconnecting');
+      expect(stateContexts[2].ctx.state).toBe('reconnecting');
+    });
+
+    it('should provide context to all callback types', () => {
+      const contexts: Record<string, StreamContext> = {};
+      
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        streamId: 'multi-callback-test',
+        onBatch: (_, ctx) => { contexts.batch = ctx; },
+        onPair: (_, ctx) => { contexts.pair = ctx; },
+        onError: (_, ctx) => { contexts.error = ctx; },
+        onStateChange: (_, ctx) => { contexts.stateChange = ctx; },
+      });
+      
+      stream.start();
+      expect(contexts.stateChange).toBeDefined();
+      expect(contexts.stateChange.streamId).toBe('multi-callback-test');
+      
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      
+      // Trigger batch and pair callbacks
+      const pairsData = Buffer.from(JSON.stringify({
+        event_type: 'pairs',
+        pairs: [{ chainId: 'solana', baseToken: { symbol: 'SOL' } }],
+      }));
+      messageHandler?.(pairsData);
+      
+      expect(contexts.batch).toBeDefined();
+      expect(contexts.batch.streamId).toBe('multi-callback-test');
+      expect(contexts.pair).toBeDefined();
+      expect(contexts.pair.streamId).toBe('multi-callback-test');
+      
+      // Trigger error callback
+      const invalidData = Buffer.from('invalid json {');
+      messageHandler?.(invalidData);
+      
+      expect(contexts.error).toBeDefined();
+      expect(contexts.error.streamId).toBe('multi-callback-test');
+    });
+
+    it('should update context state when connection state changes', () => {
+      let latestContext: StreamContext | undefined;
+      
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        onBatch: (_, ctx) => { latestContext = ctx; },
+      });
+      
+      stream.start();
+      
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      
+      // Send event while connecting
+      let pairsData = Buffer.from(JSON.stringify({ event_type: 'pairs', pairs: [] }));
+      messageHandler?.(pairsData);
+      expect(latestContext?.state).toBe('connecting');
+      
+      // Transition to connected
+      const connectedData = Buffer.from(JSON.stringify({ event_type: 'connected', connection_id: '123' }));
+      messageHandler?.(connectedData);
+      
+      // Send event while connected
+      pairsData = Buffer.from(JSON.stringify({ event_type: 'pairs', pairs: [] }));
+      messageHandler?.(pairsData);
+      expect(latestContext?.state).toBe('connected');
+    });
+  });
+
   describe('Reconnection Behavior', () => {
-    it('should schedule reconnection after error when not stopped', () => {
+    it('should schedule reconnection after close when not stopped', () => {
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 3000 });
       stream.start();
-      expect(eventSourceConstructorCalls.length).toBe(1);
-      mockEventSourceInstance.onerror?.(new Event('error'));
+      expect(webSocketConstructorCalls.length).toBe(1);
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, 'Connection lost'); // Network error
       vi.advanceTimersByTime(3000);
-      expect(eventSourceConstructorCalls.length).toBe(2);
+      expect(webSocketConstructorCalls.length).toBe(2);
     });
 
     it('should invoke onError before reconnection attempt', () => {
@@ -203,41 +360,45 @@ describe('DexScreenerStream', () => {
         onError: () => callOrder.push('error'),
       });
       stream.start();
-      mockEventSourceInstance.onerror?.(new Event('error'));
-      expect(callOrder).toContain('error');
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Network error'));
       vi.advanceTimersByTime(3000);
-      expect(eventSourceConstructorCalls.length).toBe(2);
+      expect(callOrder).toContain('error');
+      expect(webSocketConstructorCalls.length).toBe(1); // Error doesn't trigger reconnect, close does
     });
 
     it('should cancel pending reconnection when stop() is called', () => {
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 3000 });
       stream.start();
-      expect(eventSourceConstructorCalls.length).toBe(1);
-      mockEventSourceInstance.onerror?.(new Event('error'));
+      expect(webSocketConstructorCalls.length).toBe(1);
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, 'Connection lost');
       stream.stop();
       vi.advanceTimersByTime(5000);
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls.length).toBe(1);
     });
 
     it('should use configured retryMs for reconnection delay', () => {
       const customRetryMs = 5000;
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: customRetryMs });
       stream.start();
-      mockEventSourceInstance.onerror?.(new Event('error'));
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, 'Connection lost');
       vi.advanceTimersByTime(4000);
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls.length).toBe(1);
       vi.advanceTimersByTime(1000);
-      expect(eventSourceConstructorCalls.length).toBe(2);
+      expect(webSocketConstructorCalls.length).toBe(2);
     });
 
     it('should use default retryMs (3000) when not configured', () => {
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
       stream.start();
-      mockEventSourceInstance.onerror?.(new Event('error'));
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, 'Connection lost');
       vi.advanceTimersByTime(2000);
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls.length).toBe(1);
       vi.advanceTimersByTime(1000);
-      expect(eventSourceConstructorCalls.length).toBe(2);
+      expect(webSocketConstructorCalls.length).toBe(2);
     });
 
     it('should set state to reconnecting during reconnection wait', () => {
@@ -247,7 +408,8 @@ describe('DexScreenerStream', () => {
         onStateChange: (state) => stateChanges.push(state),
       });
       stream.start();
-      mockEventSourceInstance.onerror?.(new Event('error'));
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, 'Connection lost');
       expect(stream.getState()).toBe('reconnecting');
       expect(stateChanges).toContain('reconnecting');
     });
@@ -263,10 +425,9 @@ describe('DexScreenerStream', () => {
         onPair: () => { pairCalled = true; },
       });
       stream.start();
-      const pingEvent = new MessageEvent('message', {
-        data: JSON.stringify({ event_type: 'ping' }),
-      });
-      mockEventSourceInstance.onmessage?.(pingEvent);
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pingData = Buffer.from(JSON.stringify({ event_type: 'ping' }));
+      messageHandler?.(pingData);
       expect(batchCalled).toBe(false);
       expect(pairCalled).toBe(false);
     });
@@ -278,9 +439,11 @@ describe('DexScreenerStream', () => {
         onError: (error) => { errorReceived = error; },
       });
       stream.start();
-      const invalidEvent = new MessageEvent('message', { data: 'not valid json {' });
-      mockEventSourceInstance.onmessage?.(invalidEvent);
-      expect(errorReceived).toBeInstanceOf(SyntaxError);
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const invalidData = Buffer.from('not valid json {');
+      messageHandler?.(invalidData);
+      expect(errorReceived).toBeInstanceOf(Error);
+      expect((errorReceived as Error).message).toContain('Protocol error');
     });
 
     it('should handle events with pairs array but no event_type', () => {
@@ -290,13 +453,12 @@ describe('DexScreenerStream', () => {
         onBatch: (event) => { receivedEvent = event; },
       });
       stream.start();
-      const pairsEvent = new MessageEvent('message', {
-        data: JSON.stringify({
-          pairs: [{ chainId: 'solana' }],
-          stats: { h1: { txns: 100 } },
-        }),
-      });
-      mockEventSourceInstance.onmessage?.(pairsEvent);
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pairsData = Buffer.from(JSON.stringify({
+        pairs: [{ chainId: 'solana' }],
+        stats: { h1: { txns: 100 } },
+      }));
+      messageHandler?.(pairsData);
       expect(receivedEvent).toBeDefined();
       expect(receivedEvent?.pairs?.length).toBe(1);
     });
@@ -320,69 +482,314 @@ describe('DexScreenerStream', () => {
     });
   });
 
-  describe('Authentication Error Handling', () => {
-    it('should not reconnect on 401 authentication error', () => {
-      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000 });
+  describe('Configuration Defaults', () => {
+    it('should default authMode to auto when not specified', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
       stream.start();
-      expect(eventSourceConstructorCalls.length).toBe(1);
       
-      const authError = Object.assign(new Event('error'), { code: 401, message: 'Unauthorized' });
-      mockEventSourceInstance.onerror?.(authError);
+      expect(webSocketConstructorCalls.length).toBe(1);
+      const { url, options } = webSocketConstructorCalls[0];
       
-      vi.advanceTimersByTime(5000);
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      // In auto mode, token should be in header, not in URL
+      expect(url).not.toContain('token=');
+      expect(options?.headers?.Authorization).toBe(`Bearer ${apiToken}`);
     });
 
-    it('should set state to disconnected on 401 error', () => {
+    it('should default retryMs to 3000 when not specified', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
+      stream.start();
+      
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1000, 'Normal closure');
+      
+      // Should not reconnect before 3000ms
+      vi.advanceTimersByTime(2999);
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      // Should reconnect after 3000ms
+      vi.advanceTimersByTime(1);
+      expect(webSocketConstructorCalls.length).toBe(2);
+    });
+
+    it('should default keepAliveMs to 120000 when not specified', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
+      stream.start();
+      
+      // Keep-alive manager should be registered with default interval
+      expect(KeepAliveManager.getOrCreate).toHaveBeenCalledWith(
+        expect.any(String),
+        apiToken,
+        120000
+      );
+    });
+
+    it('should auto-generate streamId (UUID format) when not specified', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken });
+      
+      let capturedContext: StreamContext | undefined;
+      const streamWithCallback = new DexScreenerStream({
+        baseUrl,
+        pageUrl,
+        apiToken,
+        onStateChange: (state, ctx) => {
+          capturedContext = ctx;
+        },
+      });
+      streamWithCallback.start();
+      
+      // Trigger state change to capture context
+      const openHandler = mockWebSocketInstance._eventHandlers.get('open');
+      openHandler?.();
+      
+      expect(capturedContext?.streamId).toBeDefined();
+      // UUID format: 8-4-4-4-12 hex characters
+      expect(capturedContext?.streamId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
+
+    it('should allow all defaults to be overridden with custom values', () => {
+      const customStreamId = 'custom-stream-id';
+      const customRetryMs = 5000;
+      const customKeepAliveMs = 60000;
+      const customAuthMode = 'query';
+      
+      const stream = new DexScreenerStream({
+        baseUrl,
+        pageUrl,
+        apiToken,
+        streamId: customStreamId,
+        retryMs: customRetryMs,
+        keepAliveMs: customKeepAliveMs,
+        authMode: customAuthMode,
+      });
+      
+      stream.start();
+      
+      // Verify authMode override (query mode should have token in URL)
+      expect(webSocketConstructorCalls.length).toBe(1);
+      const { url } = webSocketConstructorCalls[0];
+      expect(url).toContain(`token=${apiToken}`);
+      
+      // Verify retryMs override
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1000, 'Normal closure');
+      
+      vi.advanceTimersByTime(4999);
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      vi.advanceTimersByTime(1);
+      expect(webSocketConstructorCalls.length).toBe(2);
+      
+      // Verify keepAliveMs override
+      expect(KeepAliveManager.getOrCreate).toHaveBeenCalledWith(
+        expect.any(String),
+        apiToken,
+        customKeepAliveMs
+      );
+    });
+  });
+
+  describe('Authentication Error Handling', () => {
+    it('should not reconnect on 4401 authentication error after fallback', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000, authMode: 'header' });
+      stream.start();
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(4401, 'Unauthorized');
+      
+      vi.advanceTimersByTime(5000);
+      expect(webSocketConstructorCalls.length).toBe(1);
+    });
+
+    it('should set state to disconnected on 4401 error with no fallback', () => {
       const stateChanges: ConnectionState[] = [];
       const stream = new DexScreenerStream({
         baseUrl, pageUrl, apiToken,
+        authMode: 'header',
         onStateChange: (state) => stateChanges.push(state),
       });
       stream.start();
       
-      const authError = Object.assign(new Event('error'), { code: 401 });
-      mockEventSourceInstance.onerror?.(authError);
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(4401, 'Unauthorized');
       
       expect(stream.getState()).toBe('disconnected');
     });
 
-    it('should invoke onError with descriptive message on 401', () => {
+    it('should invoke onError with descriptive message on 4401', () => {
       let errorReceived: unknown;
       const stream = new DexScreenerStream({
         baseUrl, pageUrl, apiToken,
+        authMode: 'header',
         onError: (error) => { errorReceived = error; },
       });
       stream.start();
       
-      const authError = Object.assign(new Event('error'), { code: 401 });
-      mockEventSourceInstance.onerror?.(authError);
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(4401, 'Unauthorized');
       
       expect(errorReceived).toBeInstanceOf(Error);
       expect((errorReceived as Error).message).toContain('Authentication failed');
     });
 
-    it('should not reconnect on other 4xx client errors', () => {
-      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000 });
+    it('should not reconnect on 4403 forbidden error', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, authMode: 'header', retryMs: 1000 });
       stream.start();
       
-      const clientError = Object.assign(new Event('error'), { code: 403, message: 'Forbidden' });
-      mockEventSourceInstance.onerror?.(clientError);
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(4403, 'Forbidden');
       
       vi.advanceTimersByTime(5000);
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls.length).toBe(1);
     });
 
-    it('should reconnect on 5xx server errors', () => {
+    it('should reconnect on normal close codes', () => {
       const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000 });
       stream.start();
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls.length).toBe(1);
       
-      const serverError = Object.assign(new Event('error'), { code: 500, message: 'Internal Server Error' });
-      mockEventSourceInstance.onerror?.(serverError);
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1000, 'Normal closure');
       
       vi.advanceTimersByTime(1000);
-      expect(eventSourceConstructorCalls.length).toBe(2);
+      expect(webSocketConstructorCalls.length).toBe(2);
+    });
+
+    it('should attempt fallback on 4401 with auto mode', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, authMode: 'auto', retryMs: 1000 });
+      stream.start();
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(4401, 'Unauthorized');
+      
+      // Should immediately retry with query auth
+      expect(webSocketConstructorCalls.length).toBe(2);
+      // Second URL should have token in query
+      expect(webSocketConstructorCalls[1].url).toContain('token=');
+    });
+
+    it('should not reconnect on upgrade auth error in header mode', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, authMode: 'header', retryMs: 1000 });
+      stream.start();
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Unexpected server response: 401'));
+      
+      // Should not schedule reconnect
+      vi.advanceTimersByTime(5000);
+      expect(webSocketConstructorCalls.length).toBe(1);
+      expect(stream.getState()).toBe('disconnected');
+    });
+
+    it('should not reconnect on upgrade auth error after fallback exhausted', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, authMode: 'auto', retryMs: 1000 });
+      stream.start();
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      // First error triggers fallback
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Unexpected server response: 401'));
+      expect(webSocketConstructorCalls.length).toBe(2);
+      
+      // Second error should NOT reconnect
+      const errorHandler2 = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler2?.(new Error('Unexpected server response: 401'));
+      
+      vi.advanceTimersByTime(5000);
+      expect(webSocketConstructorCalls.length).toBe(2);
+      expect(stream.getState()).toBe('disconnected');
+    });
+
+    it('should invoke onError with auth error on upgrade failure without fallback', () => {
+      let errorReceived: unknown;
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        authMode: 'header',
+        onError: (error) => { errorReceived = error; },
+      });
+      stream.start();
+      
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Unexpected server response: 403'));
+      
+      expect(errorReceived).toBeInstanceOf(Error);
+      expect((errorReceived as Error).message).toContain('Authentication failed');
+      expect(stream.getState()).toBe('disconnected');
+    });
+
+    it('should reconnect on non-auth network errors', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000 });
+      stream.start();
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('ECONNREFUSED'));
+      
+      // Should trigger handleClose which schedules reconnect
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, 'Abnormal closure');
+      
+      vi.advanceTimersByTime(1000);
+      expect(webSocketConstructorCalls.length).toBe(2);
+    });
+
+    it('should reconnect on upgrade 500 error', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000 });
+      stream.start();
+      expect(webSocketConstructorCalls.length).toBe(1);
+      
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Unexpected server response: 500'));
+      
+      // Should trigger close which schedules reconnect
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, Buffer.from(''));
+      
+      vi.advanceTimersByTime(1000);
+      expect(webSocketConstructorCalls.length).toBe(2); // Reconnected
+      expect(stream.getState()).toBe('connecting');
+    });
+
+    it('should reconnect on upgrade 502 error', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000 });
+      stream.start();
+      
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Unexpected server response: 502'));
+      
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, Buffer.from(''));
+      
+      vi.advanceTimersByTime(1000);
+      expect(webSocketConstructorCalls.length).toBe(2);
+    });
+
+    it('should reconnect on upgrade 429 rate limit error', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, retryMs: 1000 });
+      stream.start();
+      
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Unexpected server response: 429'));
+      
+      const closeHandler = mockWebSocketInstance._eventHandlers.get('close');
+      closeHandler?.(1006, Buffer.from(''));
+      
+      vi.advanceTimersByTime(1000);
+      expect(webSocketConstructorCalls.length).toBe(2);
+    });
+
+    it('should NOT reconnect on upgrade 401 error in header mode', () => {
+      const stream = new DexScreenerStream({ baseUrl, pageUrl, apiToken, authMode: 'header', retryMs: 1000 });
+      stream.start();
+      
+      const errorHandler = mockWebSocketInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Unexpected server response: 401'));
+      
+      vi.advanceTimersByTime(5000);
+      expect(webSocketConstructorCalls.length).toBe(1); // No reconnect
+      expect(stream.getState()).toBe('disconnected');
     });
   });
 });

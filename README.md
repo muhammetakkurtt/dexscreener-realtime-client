@@ -1,6 +1,6 @@
 # DexScreener Realtime Client
 
-Node.js/TypeScript SDK and CLI for consuming SSE streams from the DexScreener Realtime Monitor Apify Actor. This client makes it easy to integrate real-time DexScreener data into your backends, bots, and data pipelines.
+Node.js/TypeScript SDK and CLI for consuming real-time WebSocket streams from the DexScreener Realtime Monitor Apify Actor. This client makes it easy to integrate real-time DexScreener data into your backends, bots, and data pipelines with flexible authentication and automatic reconnection.
 
 ## Documentation
 
@@ -49,7 +49,7 @@ Create a `.env` file in the project root with the following variables:
 | Variable | Description |
 |----------|-------------|
 | `APIFY_TOKEN` | Your Apify API token for authentication |
-| `DEX_ACTOR_BASE` | Base URL for your DexScreener Realtime Monitor Actor |
+| `DEX_ACTOR_BASE` | Base URL for your DexScreener Realtime Monitor Actor (supports http/https/ws/wss protocols) |
 
 Example:
 ```bash
@@ -57,11 +57,38 @@ APIFY_TOKEN=apify_api_xxxxxxxxxxxxx
 DEX_ACTOR_BASE=https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor
 ```
 
+**Protocol Normalization**: The SDK automatically converts HTTP/HTTPS URLs to WebSocket (WS/WSS) protocols:
+- `http://` → `ws://`
+- `https://` → `wss://`
+- `ws://` and `wss://` are used as-is
+
+You can provide the base URL in any format - the SDK handles the conversion automatically.
+
 ## SDK Usage
 
-### Basic Stream
+### Quick Start - Minimal Configuration
 
-Import from the local build and create a stream:
+The simplest way to get started with default settings:
+
+```typescript
+import { DexScreenerStream } from './dist/index.js';
+
+const stream = new DexScreenerStream({
+  baseUrl: process.env.DEX_ACTOR_BASE!,
+  apiToken: process.env.APIFY_TOKEN!,
+  pageUrl: 'https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc',
+  
+  onPair: (pair) => {
+    console.log(`${pair.baseToken?.symbol}: $${pair.priceUsd}`);
+  },
+});
+
+stream.start();
+```
+
+### Basic Stream with Authentication Modes
+
+The SDK supports flexible authentication strategies:
 
 ```typescript
 import { DexScreenerStream } from './dist/index.js';
@@ -71,6 +98,7 @@ const stream = new DexScreenerStream({
   apiToken: process.env.APIFY_TOKEN!,
   pageUrl: 'https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc',
   streamId: 'solana-trending',
+  authMode: 'auto', // 'auto' | 'header' | 'query' | 'both' (default: 'auto')
   
   onBatch: (event, { streamId }) => {
     console.log(`[${streamId}] Received ${event.pairs?.length ?? 0} pairs`);
@@ -95,6 +123,12 @@ stream.start();
 // stream.stop();
 ```
 
+**Authentication Modes**:
+- `auto` (default): Tries header authentication first, falls back to query parameter if needed
+- `header`: Sends token only in Authorization header (more secure)
+- `query`: Sends token only as URL query parameter
+- `both`: Sends token in both header and query parameter
+
 ### Multi-Stream
 
 Monitor multiple DexScreener pages simultaneously:
@@ -105,6 +139,7 @@ import { DexScreenerMultiStream } from './dist/index.js';
 const multi = new DexScreenerMultiStream({
   baseUrl: process.env.DEX_ACTOR_BASE!,
   apiToken: process.env.APIFY_TOKEN!,
+  authMode: 'auto', // Applied to all streams
   
   streams: [
     { id: 'solana-trending', pageUrl: 'https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc' },
@@ -137,7 +172,8 @@ Print JSON events to stdout:
 node dist/cli.cjs \
   --base-url https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor \
   --api-token apify_api_xxxxxxxxxxxxx \
-  --page-url "https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc"
+  --page-url "https://dexscreener.com/solana?rankBy=trendingScoreH6&order=desc" \
+  --auth-mode auto
 ```
 
 Or using environment variable:
@@ -187,9 +223,10 @@ node dist/cli.cjs \
 
 | Option | Description | Required |
 |--------|-------------|----------|
-| `--base-url` | Apify Standby Actor base URL | Yes |
+| `--base-url` | Apify Standby Actor base URL (http/https/ws/wss) | Yes |
 | `--api-token` | Apify API token (or use `APIFY_TOKEN` env) | Yes |
 | `--page-url` | DexScreener page URL(s) to monitor | Yes |
+| `--auth-mode` | Authentication mode: `auto`, `header`, `query`, `both` | No (default: `auto`) |
 | `--mode` | Output mode: `stdout`, `jsonl`, `webhook` | No (default: `stdout`) |
 | `--jsonl-path` | File path for JSONL output | Required for `jsonl` mode |
 | `--webhook-url` | Webhook URL for HTTP POST | Required for `webhook` mode |
@@ -202,10 +239,11 @@ node dist/cli.cjs \
 
 ```typescript
 type DexStreamOptions = {
-  baseUrl: string;           // Apify Standby Actor base URL
+  baseUrl: string;           // Apify Standby Actor base URL (http/https/ws/wss)
   apiToken: string;          // Apify API token
   pageUrl: string;           // DexScreener page URL
   streamId?: string;         // Optional stream identifier
+  authMode?: 'auto' | 'header' | 'query' | 'both';  // Authentication mode (default: 'auto')
   retryMs?: number;          // Reconnection delay (default: 3000)
   keepAliveMs?: number;      // Health check interval (default: 120000, set to 0 to disable)
   onBatch?: (event: DexEvent, ctx: StreamContext) => void;
@@ -222,6 +260,7 @@ type MultiStreamConfig = {
   baseUrl: string;
   apiToken: string;
   streams: Array<{ id: string; pageUrl: string }>;
+  authMode?: 'auto' | 'header' | 'query' | 'both';  // Authentication mode for all streams (default: 'auto')
   retryMs?: number;
   keepAliveMs?: number;
   onBatch?: (event: DexEvent, ctx: StreamContext) => void;
@@ -297,7 +336,7 @@ type Pair = {
 
 #### Example DexEvent Structure
 
-The SDK automatically parses SSE messages and delivers clean `DexEvent` objects to your callbacks. Here's what you receive in the `onBatch` callback:
+The SDK automatically parses WebSocket messages and delivers clean `DexEvent` objects to your callbacks. Here's what you receive in the `onBatch` callback:
 
 ```json
 {
@@ -538,7 +577,9 @@ node dist/cli.cjs --validate
 
 ## Features
 
-- 🔄 **Real-time Streaming** - SSE connection with automatic reconnection
+- 🔄 **Real-time Streaming** - WebSocket connection with automatic reconnection
+- 🔐 **Flexible Authentication** - Multiple auth modes (header, query, both, auto-fallback)
+- 🔧 **Protocol Normalization** - Automatic HTTP/HTTPS to WS/WSS conversion
 - 🌐 **Multi-Stream Support** - Monitor multiple pages/chains simultaneously  
 - 🔍 **Advanced Filtering** - Filter pairs by chain, liquidity, volume, price change
 - 🔧 **Data Transformation** - Select and reshape fields with aliases

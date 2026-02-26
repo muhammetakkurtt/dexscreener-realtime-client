@@ -26,7 +26,7 @@ This document provides a complete technical reference for all classes, methods, 
 
 ### DexScreenerStream
 
-Primary interface for consuming real-time data from a single DexScreener page.
+Primary interface for consuming real-time data from a single DexScreener page via WebSocket.
 
 #### Constructor
 
@@ -38,16 +38,29 @@ new DexScreenerStream(options: DexStreamOptions)
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `baseUrl` | string | Yes | - | Apify Actor base URL |
+| `baseUrl` | string | Yes | - | Apify Actor base URL (http/https/ws/wss) |
 | `pageUrl` | string | Yes | - | DexScreener page URL to monitor |
 | `apiToken` | string | Yes | - | Apify API token |
 | `streamId` | string | No | undefined | Unique identifier for this stream |
+| `authMode` | 'auto' \| 'header' \| 'query' \| 'both' | No | 'auto' | Authentication strategy |
 | `retryMs` | number | No | 3000 | Milliseconds to wait before reconnecting |
 | `keepAliveMs` | number | No | 120000 | Milliseconds between keep-alive pings |
 | `onBatch` | function | No | undefined | Callback for batch events |
 | `onPair` | function | No | undefined | Callback for individual pairs |
 | `onError` | function | No | undefined | Callback for errors |
 | `onStateChange` | function | No | undefined | Callback for connection state changes |
+
+**Authentication Modes:**
+- `auto` (default): Tries header authentication first, automatically falls back to query parameter on 4401 error
+- `header`: Sends token only in Authorization header (most secure, token not in URL)
+- `query`: Sends token only as URL query parameter
+- `both`: Sends token in both header and query parameter (maximum compatibility)
+
+**Protocol Normalization:**
+The SDK automatically converts HTTP/HTTPS URLs to WebSocket protocols:
+- `http://` → `ws://`
+- `https://` → `wss://`
+- `ws://` and `wss://` are used as-is
 
 **Callback Signatures:**
 
@@ -65,6 +78,7 @@ const stream = new DexScreenerStream({
   baseUrl: process.env.DEX_ACTOR_BASE!,
   pageUrl: 'https://dexscreener.com/solana',
   apiToken: process.env.APIFY_TOKEN!,
+  authMode: 'auto', // Recommended: tries header first, falls back to query
   onPair: (pair, ctx) => console.log(pair.baseToken?.symbol)
 });
 ```
@@ -77,7 +91,11 @@ const stream = new DexScreenerStream({
 start(): void
 ```
 
-Starts the SSE connection and begins receiving events.
+Starts the WebSocket connection and begins receiving events. The connection will automatically:
+- Normalize the protocol (HTTP/HTTPS → WS/WSS)
+- Apply the configured authentication mode
+- Attempt fallback authentication if using `authMode: 'auto'` and header auth fails
+- Reconnect automatically on network errors (but not on authentication errors)
 
 ##### stop()
 
@@ -99,7 +117,7 @@ Returns the current connection state: `'disconnected'` | `'connecting'` | `'conn
 
 ### DexScreenerMultiStream
 
-Manages multiple DexScreener streams simultaneously.
+Manages multiple DexScreener WebSocket streams simultaneously.
 
 #### Constructor
 
@@ -111,9 +129,10 @@ new DexScreenerMultiStream(config: MultiStreamConfig)
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `baseUrl` | string | Yes | - | Apify Actor base URL (shared by all streams) |
+| `baseUrl` | string | Yes | - | Apify Actor base URL (shared by all streams, http/https/ws/wss) |
 | `apiToken` | string | Yes | - | Apify API token (shared by all streams) |
 | `streams` | StreamConfig[] | Yes | - | Array of stream configurations |
+| `authMode` | 'auto' \| 'header' \| 'query' \| 'both' | No | 'auto' | Authentication mode for all streams |
 | `retryMs` | number | No | 3000 | Retry delay for all streams |
 | `keepAliveMs` | number | No | 120000 | Keep-alive interval for all streams |
 | `onBatch` | function | No | undefined | Callback for batch events from any stream |
@@ -136,6 +155,7 @@ type StreamConfig = {
 const multi = new DexScreenerMultiStream({
   baseUrl: process.env.DEX_ACTOR_BASE!,
   apiToken: process.env.APIFY_TOKEN!,
+  authMode: 'auto', // Applied to all streams
   streams: [
     { id: 'solana', pageUrl: 'https://dexscreener.com/solana' },
     { id: 'ethereum', pageUrl: 'https://dexscreener.com/ethereum' }
@@ -1312,6 +1332,81 @@ type MonitoringConfig = {
 
 ### URL Utilities
 
+#### buildWsUrl()
+
+```typescript
+function buildWsUrl(
+  baseUrl: string, 
+  pageUrl: string, 
+  token?: string, 
+  authMode?: 'auto' | 'header' | 'query' | 'both'
+): string
+```
+
+Builds a WebSocket URL with protocol normalization and authentication parameters.
+
+**Parameters:**
+- `baseUrl`: Base URL (http/https/ws/wss) - will be normalized to ws/wss
+- `pageUrl`: DexScreener page URL to monitor
+- `token`: Optional API token
+- `authMode`: Authentication mode (default: 'auto')
+
+**Protocol Normalization:**
+- `http://` → `ws://`
+- `https://` → `wss://`
+- `ws://` and `wss://` pass through unchanged
+
+**Authentication Behavior:**
+- `auto` or `header`: Token NOT included in URL (sent via Authorization header)
+- `query` or `both`: Token included as query parameter
+
+**Returns:** Complete WebSocket URL with `/events/dex/pairs` endpoint and query parameters
+
+**Example:**
+```typescript
+// Header auth (token not in URL)
+const url1 = buildWsUrl(
+  'https://example.apify.actor',
+  'https://dexscreener.com/solana',
+  'token123',
+  'header'
+);
+// Returns: wss://example.apify.actor/events/dex/pairs?page_url=https%3A%2F%2Fdexscreener.com%2Fsolana
+
+// Query auth (token in URL)
+const url2 = buildWsUrl(
+  'https://example.apify.actor',
+  'https://dexscreener.com/solana',
+  'token123',
+  'query'
+);
+// Returns: wss://example.apify.actor/events/dex/pairs?page_url=...&token=token123
+```
+
+#### buildHealthUrl()
+
+```typescript
+function buildHealthUrl(baseUrl: string): string
+```
+
+Builds a health check URL with protocol mapping for keep-alive requests.
+
+**Parameters:**
+- `baseUrl`: Base URL (ws/wss/http/https)
+
+**Protocol Mapping:**
+- `ws://` → `http://`
+- `wss://` → `https://`
+- `http://` and `https://` pass through unchanged
+
+**Returns:** HTTP/HTTPS URL ending with `/health`
+
+**Example:**
+```typescript
+const healthUrl = buildHealthUrl('wss://example.apify.actor');
+// Returns: https://example.apify.actor/health
+```
+
 #### sanitizeBaseUrl()
 
 ```typescript
@@ -1320,21 +1415,13 @@ function sanitizeBaseUrl(url: string): string
 
 Removes trailing slashes from base URL.
 
-#### buildSseUrl()
-
-```typescript
-function buildSseUrl(baseUrl: string, pageUrl: string, apiToken: string): string
-```
-
-Constructs the SSE endpoint URL.
-
 #### validateUrls()
 
 ```typescript
 function validateUrls(baseUrl: string, pageUrl: string): void
 ```
 
-Validates that URLs are HTTPS. Throws error if invalid.
+Validates that URLs are non-empty and properly formatted. Accepts http/https/ws/wss protocols. Throws error if invalid.
 
 ---
 

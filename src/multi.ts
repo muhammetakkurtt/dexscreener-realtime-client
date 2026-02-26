@@ -63,26 +63,27 @@ export class DexScreenerMultiStream {
         apiToken: config.apiToken,
         pageUrl: streamConfig.pageUrl,
         streamId: streamConfig.id,
+        authMode: config.authMode,
         retryMs: config.retryMs,
         keepAliveMs: config.keepAliveMs,
         onBatch: config.onBatch
-          ? (event: DexEvent, _ctx: StreamContext) => {
-              config.onBatch!(event, { streamId: streamConfig.id });
+          ? (event: DexEvent, ctx: StreamContext) => {
+              config.onBatch!(event, ctx);
             }
           : undefined,
         onPair: config.onPair
-          ? (pair: Pair, _ctx: StreamContext) => {
-              config.onPair!(pair, { streamId: streamConfig.id });
+          ? (pair: Pair, ctx: StreamContext) => {
+              config.onPair!(pair, ctx);
             }
           : undefined,
         onError: config.onError
-          ? (error: unknown, _ctx: StreamContext) => {
-              config.onError!(error, { streamId: streamConfig.id });
+          ? (error: unknown, ctx: StreamContext) => {
+              config.onError!(error, ctx);
             }
           : undefined,
         onStateChange: config.onStateChange
-          ? (state: ConnectionState, _ctx: StreamContext) => {
-              config.onStateChange!(state, { streamId: streamConfig.id });
+          ? (state: ConnectionState, ctx: StreamContext) => {
+              config.onStateChange!(state, ctx);
             }
           : undefined,
       });

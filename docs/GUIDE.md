@@ -35,7 +35,7 @@ npm install
 ```
 
 This will install all required packages including:
-- `eventsource` - SSE client for real-time streaming
+- `ws` - WebSocket client for real-time streaming
 - `dotenv` - Environment variable management
 - `yargs` - CLI argument parsing
 - `chalk` - Terminal output formatting
@@ -84,7 +84,15 @@ DEX_ACTOR_BASE=https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `APIFY_TOKEN` | Your Apify API authentication token. Required for all API requests. | `apify_api_xxxxxxxxxxxxx` |
-| `DEX_ACTOR_BASE` | Base URL of the DexScreener Realtime Monitor Apify Actor. This is the Standby Actor endpoint. | `https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor` |
+| `DEX_ACTOR_BASE` | Base URL of the DexScreener Realtime Monitor Apify Actor. Supports http/https/ws/wss protocols (automatically normalized). | `https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor` |
+
+**Protocol Normalization:**
+The SDK automatically converts HTTP/HTTPS URLs to WebSocket protocols:
+- `http://` → `ws://`
+- `https://` → `wss://`
+- `ws://` and `wss://` are used as-is
+
+You can provide the base URL in any format - the SDK handles the conversion automatically.
 
 ### Quick Start - SDK
 
@@ -141,10 +149,11 @@ npx tsx my-stream.ts
 ```
 
 **What this does:**
-- Connects to the DexScreener Realtime Monitor Actor
+- Connects to the DexScreener Realtime Monitor Actor via WebSocket
 - Streams real-time data from the Solana trending pairs page
 - Logs each pair's symbol and price as updates arrive
-- Automatically reconnects if the connection drops
+- Automatically reconnects on network errors (but not on authentication errors)
+- Uses automatic authentication fallback if header auth fails
 - Handles graceful shutdown on Ctrl+C
 
 ### Quick Start - CLI
@@ -289,7 +298,7 @@ Wait for the build to complete, then try running your code again.
 
 **Solution:**
 1. Check your internet connection
-2. Verify firewall settings allow outbound HTTPS connections
+2. Verify firewall settings allow outbound WebSocket connections (WSS on port 443)
 3. Try increasing the retry delay:
    ```typescript
    const stream = new DexScreenerStream({
@@ -297,7 +306,14 @@ Wait for the build to complete, then try running your code again.
      retryMs: 5000, // Wait 5 seconds between retries
    });
    ```
-4. Check if your network blocks SSE (Server-Sent Events) connections
+4. Check if your network or proxy blocks WebSocket connections
+5. Try using a different authentication mode:
+   ```typescript
+   const stream = new DexScreenerStream({
+     // ... other options
+     authMode: 'query', // Some proxies work better with query auth
+   });
+   ```
 
 #### Problem: "ECONNREFUSED" or "ENOTFOUND" errors
 
@@ -364,6 +380,354 @@ Or always run with `node`:
 ```bash
 node dist/cli.cjs --help
 ```
+
+---
+
+## Authentication Strategies
+
+The SDK supports four authentication modes to accommodate different deployment environments and security requirements.
+
+### Authentication Modes
+
+#### 1. Auto Mode (Recommended)
+
+```typescript
+const stream = new DexScreenerStream({
+  baseUrl: process.env.DEX_ACTOR_BASE!,
+  apiToken: process.env.APIFY_TOKEN!,
+  pageUrl: 'https://dexscreener.com/solana',
+  authMode: 'auto', // Default
+});
+```
+
+**How it works:**
+1. First attempts authentication with token in Authorization header
+2. If server responds with 4401 error, automatically retries with token in query parameter
+3. Fallback happens only once per connection cycle
+
+**When to use:**
+- Recommended for most use cases
+- Best balance of security and compatibility
+- Handles servers that don't support header authentication
+
+#### 2. Header Mode (Most Secure)
+
+```typescript
+const stream = new DexScreenerStream({
+  baseUrl: process.env.DEX_ACTOR_BASE!,
+  apiToken: process.env.APIFY_TOKEN!,
+  pageUrl: 'https://dexscreener.com/solana',
+  authMode: 'header',
+});
+```
+
+**How it works:**
+- Sends token only in `Authorization: Bearer <token>` header
+- Token never appears in URL or logs
+- No automatic fallback on authentication failure
+
+**When to use:**
+- Maximum security (token not in URL)
+- When you know the server supports header authentication
+- Production environments with strict security requirements
+
+#### 3. Query Mode
+
+```typescript
+const stream = new DexScreenerStream({
+  baseUrl: process.env.DEX_ACTOR_BASE!,
+  apiToken: process.env.APIFY_TOKEN!,
+  pageUrl: 'https://dexscreener.com/solana',
+  authMode: 'query',
+});
+```
+
+**How it works:**
+- Sends token as URL query parameter: `?token=<token>`
+- Token visible in URL (less secure)
+- No automatic fallback
+
+**When to use:**
+- When your environment doesn't support custom headers
+- Behind proxies that strip Authorization headers
+- Legacy systems that only support query parameter auth
+
+#### 4. Both Mode (Maximum Compatibility)
+
+```typescript
+const stream = new DexScreenerStream({
+  baseUrl: process.env.DEX_ACTOR_BASE!,
+  apiToken: process.env.APIFY_TOKEN!,
+  pageUrl: 'https://dexscreener.com/solana',
+  authMode: 'both',
+});
+```
+
+**How it works:**
+- Sends token in both Authorization header AND query parameter
+- Redundant but ensures compatibility
+
+**When to use:**
+- Behind complex proxy setups
+- When you're unsure which method the server requires
+- Maximum compatibility at the cost of security
+
+### Authentication Decision Tree
+
+```
+Need authentication? 
+├─ Yes → Do you know the server supports headers?
+│  ├─ Yes → Use 'header' mode (most secure)
+│  ├─ No → Use 'auto' mode (recommended)
+│  └─ Behind proxy that strips headers? → Use 'query' or 'both' mode
+└─ No → (Not applicable - token always required)
+```
+
+### Handling Authentication Errors
+
+```typescript
+const stream = new DexScreenerStream({
+  baseUrl: process.env.DEX_ACTOR_BASE!,
+  apiToken: process.env.APIFY_TOKEN!,
+  pageUrl: 'https://dexscreener.com/solana',
+  authMode: 'auto',
+  
+  onError: (error, { streamId }) => {
+    if (error instanceof Error) {
+      if (error.message.includes('4401') || error.message.includes('Authentication failed')) {
+        console.error(`[${streamId}] Authentication failed - check your APIFY_TOKEN`);
+        console.error(`[${streamId}] Token should start with 'apify_api_'`);
+        // Don't retry - authentication errors are not recoverable without fixing the token
+      } else if (error.message.includes('4403')) {
+        console.error(`[${streamId}] Forbidden - token may lack necessary permissions`);
+      }
+    }
+  },
+  
+  onStateChange: (state, { streamId }) => {
+    if (state === 'disconnected') {
+      console.log(`[${streamId}] Disconnected - check if authentication failed`);
+    }
+  },
+});
+```
+
+**Important Notes:**
+- Authentication errors (4401, 4403) do NOT trigger automatic reconnection
+- The stream will transition to 'disconnected' state on auth failure
+- Fix your token and manually restart the stream
+- Network errors DO trigger automatic reconnection
+
+---
+
+## WebSocket Troubleshooting
+
+### Connection Issues
+
+#### Problem: WebSocket connection refused or timeout
+
+**Symptoms:**
+- "ECONNREFUSED" errors
+- Connection timeout
+- "WebSocket connection failed"
+
+**Solutions:**
+
+1. **Check firewall and network:**
+   ```bash
+   # Test if WebSocket port is accessible
+   telnet muhammetakkurtt--dexscreener-realtime-monitor.apify.actor 443
+   ```
+
+2. **Verify protocol:**
+   ```typescript
+   // The SDK auto-converts, but you can be explicit
+   const stream = new DexScreenerStream({
+     baseUrl: 'wss://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor',
+     // ... other options
+   });
+   ```
+
+3. **Check proxy settings:**
+   - Some corporate proxies block WebSocket connections
+   - Try from a different network
+   - Configure proxy to allow WebSocket upgrade requests
+
+#### Problem: Connection drops frequently
+
+**Symptoms:**
+- Frequent reconnections
+- State changes: connected → reconnecting → connected
+
+**Solutions:**
+
+1. **Increase keep-alive frequency:**
+   ```typescript
+   const stream = new DexScreenerStream({
+     // ... other options
+     keepAliveMs: 60000, // Ping every 60 seconds instead of 120
+   });
+   ```
+
+2. **Adjust retry delay:**
+   ```typescript
+   const stream = new DexScreenerStream({
+     // ... other options
+     retryMs: 5000, // Wait 5 seconds between retries
+   });
+   ```
+
+3. **Check network stability:**
+   - Run a continuous ping test
+   - Check for packet loss
+   - Consider using a more stable network connection
+
+#### Problem: "Protocol error" or unexpected close codes
+
+**Symptoms:**
+- Close code 1002 (protocol error)
+- Close code 1006 (abnormal closure)
+- Unexpected disconnections
+
+**Solutions:**
+
+1. **Verify Actor is running:**
+   ```bash
+   # Check health endpoint
+   curl https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor/health
+   ```
+
+2. **Check for message parsing errors:**
+   ```typescript
+   const stream = new DexScreenerStream({
+     // ... other options
+     onError: (error, ctx) => {
+       console.error('Detailed error:', error);
+       if (error instanceof Error) {
+         console.error('Stack:', error.stack);
+       }
+     },
+   });
+   ```
+
+3. **Enable verbose logging:**
+   - Check browser/Node.js console for WebSocket frame errors
+   - Look for malformed JSON messages
+
+### Performance Issues
+
+#### Problem: High memory usage
+
+**Symptoms:**
+- Memory usage grows over time
+- Eventually crashes with "out of memory"
+
+**Solutions:**
+
+1. **Use filtering to reduce data volume:**
+   ```typescript
+   import { FilterBuilder } from './dist/index.js';
+   
+   const filter = FilterBuilder.combineFilters([
+     FilterBuilder.liquidityFilter(50000),
+     FilterBuilder.volumeFilter('h24', 100000)
+   ], 'AND');
+   
+   const stream = new DexScreenerStream({
+     // ... other options
+     onBatch: (event, ctx) => {
+       const filtered = event.pairs?.filter(pair => 
+         filter({ pair, event, streamId: ctx.streamId ?? 'unknown' })
+       ) ?? [];
+       // Process only filtered pairs
+     },
+   });
+   ```
+
+2. **Use transformation to select only needed fields:**
+   ```typescript
+   import { Transformer } from './dist/index.js';
+   
+   const transformer = new Transformer({
+     fields: ['baseToken.symbol', 'priceUsd', 'volume.h24'],
+   });
+   
+   const stream = new DexScreenerStream({
+     // ... other options
+     onBatch: (event, ctx) => {
+       const transformed = transformer.transformBatch(event.pairs ?? []);
+       // Process smaller transformed data
+     },
+   });
+   ```
+
+3. **Avoid storing all events in memory:**
+   ```typescript
+   // Bad: stores everything
+   const allEvents: DexEvent[] = [];
+   onBatch: (event) => allEvents.push(event);
+   
+   // Good: process and discard
+   onBatch: (event) => {
+     processEvent(event);
+     // Event is garbage collected after processing
+   };
+   ```
+
+#### Problem: Slow message processing
+
+**Symptoms:**
+- Lag between events
+- Backpressure warnings
+- Missed events
+
+**Solutions:**
+
+1. **Optimize callback performance:**
+   ```typescript
+   const stream = new DexScreenerStream({
+     // ... other options
+     onPair: (pair, ctx) => {
+       // Fast: minimal processing
+       if (pair.priceChange?.h1 && pair.priceChange.h1 > 10) {
+         quickAlert(pair);
+       }
+     },
+   });
+   ```
+
+2. **Use onBatch instead of onPair for bulk operations:**
+   ```typescript
+   const stream = new DexScreenerStream({
+     // ... other options
+     onBatch: (event, ctx) => {
+       // Process all pairs at once (more efficient)
+       const highChangePairs = event.pairs?.filter(p => 
+         (p.priceChange?.h1 ?? 0) > 10
+       ) ?? [];
+       bulkProcess(highChangePairs);
+     },
+   });
+   ```
+
+3. **Offload heavy processing to worker threads:**
+   ```typescript
+   import { Worker } from 'worker_threads';
+   
+   const worker = new Worker('./processor.js');
+   
+   const stream = new DexScreenerStream({
+     // ... other options
+     onBatch: (event, ctx) => {
+       // Send to worker for processing
+       worker.postMessage(event);
+     },
+   });
+   ```
+
+### Authentication Troubleshooting
+
+See the [Authentication Strategies](#authentication-strategies) section above for detailed authentication troubleshooting.
 
 ---
 

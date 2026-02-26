@@ -8,6 +8,12 @@ import {
   TransformError,
   OutputError,
   StreamError,
+  sanitizeErrorMessage,
+  sanitizeError,
+  sanitizeErrorValue,
+  createErrorWithContext,
+  sanitizeUrl,
+  containsSensitiveData,
 } from '../src/errors/index.js';
 import {
   formatAuthError,
@@ -17,6 +23,7 @@ import {
   formatWebhookError,
   formatGenericError,
 } from '../src/errors/formatter.js';
+import { ConfigValidator } from '../src/config/validator.js';
 
 describe('Error Classes', () => {
   describe('DexScreenerError', () => {
@@ -426,6 +433,683 @@ describe('Error Formatters', () => {
       expect(formatted).toContain('Something went wrong');
       expect(formatted).toContain('Context:');
       expect(formatted).not.toContain('Suggestion:');
+    });
+  });
+});
+
+describe('Configuration Validation', () => {
+  describe('ConfigValidator.validateStreamOptions', () => {
+    it('should validate valid stream options', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should reject empty baseUrl', () => {
+      
+      
+      const options = {
+        baseUrl: '',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].path).toEqual(['baseUrl']);
+      expect(result.errors[0].message).toContain('empty or invalid');
+    });
+
+    it('should reject invalid baseUrl', () => {
+      
+      
+      const options = {
+        baseUrl: 'not-a-url',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['baseUrl']);
+    });
+
+    it('should accept ws:// and wss:// protocols in baseUrl', () => {
+      
+      
+      const wsOptions = {
+        baseUrl: 'ws://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+      };
+
+      const wssOptions = {
+        baseUrl: 'wss://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+      };
+
+      expect(ConfigValidator.validateStreamOptions(wsOptions).valid).toBe(true);
+      expect(ConfigValidator.validateStreamOptions(wssOptions).valid).toBe(true);
+    });
+
+    it('should reject empty pageUrl', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: '',
+        apiToken: 'test-token',
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].path).toEqual(['pageUrl']);
+      expect(result.errors[0].message).toContain('empty or invalid');
+    });
+
+    it('should reject invalid pageUrl', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'not-a-url',
+        apiToken: 'test-token',
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['pageUrl']);
+    });
+
+    it('should reject empty apiToken', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: '',
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].path).toEqual(['apiToken']);
+      expect(result.errors[0].message).toContain('empty');
+    });
+
+    it('should reject invalid authMode', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+        authMode: 'invalid',
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].path).toEqual(['authMode']);
+      expect(result.errors[0].message).toContain("'auto', 'header', 'query', 'both'");
+    });
+
+    it('should accept valid authMode values', () => {
+      
+      
+      const modes = ['auto', 'header', 'query', 'both'];
+      
+      modes.forEach(mode => {
+        const options = {
+          baseUrl: 'https://example.com',
+          pageUrl: 'https://dexscreener.com/solana',
+          apiToken: 'test-token',
+          authMode: mode,
+        };
+
+        const result = ConfigValidator.validateStreamOptions(options);
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    it('should accept undefined authMode', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+        authMode: undefined,
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject non-positive retryMs', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+        retryMs: 0,
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['retryMs']);
+      expect(result.errors[0].message).toContain('positive integer');
+    });
+
+    it('should reject non-integer retryMs', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+        retryMs: 3.5,
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['retryMs']);
+    });
+
+    it('should accept valid retryMs', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+        retryMs: 3000,
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should reject non-integer keepAliveMs', () => {
+      
+      
+      const options = {
+        baseUrl: 'https://example.com',
+        pageUrl: 'https://dexscreener.com/solana',
+        apiToken: 'test-token',
+        keepAliveMs: 120.5,
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['keepAliveMs']);
+      expect(result.errors[0].message).toContain('integer');
+    });
+
+    it('should accept valid keepAliveMs including zero and negative', () => {
+      
+      
+      const values = [0, -1, 120000];
+      
+      values.forEach(value => {
+        const options = {
+          baseUrl: 'https://example.com',
+          pageUrl: 'https://dexscreener.com/solana',
+          apiToken: 'test-token',
+          keepAliveMs: value,
+        };
+
+        const result = ConfigValidator.validateStreamOptions(options);
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    it('should report multiple validation errors', () => {
+      
+      
+      const options = {
+        baseUrl: '',
+        pageUrl: '',
+        apiToken: '',
+        authMode: 'invalid',
+        retryMs: -1,
+      };
+
+      const result = ConfigValidator.validateStreamOptions(options);
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(1);
+    });
+  });
+
+  describe('ConfigValidator.validateMultiStreamConfig', () => {
+    it('should validate valid multi-stream config', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [
+          { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+          { id: 'stream2', pageUrl: 'https://dexscreener.com/ethereum' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should reject empty baseUrl', () => {
+      
+      
+      const config = {
+        baseUrl: '',
+        apiToken: 'test-token',
+        streams: [
+          { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['baseUrl']);
+    });
+
+    it('should reject empty apiToken', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: '',
+        streams: [
+          { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['apiToken']);
+    });
+
+    it('should reject invalid authMode', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        authMode: 'invalid',
+        streams: [
+          { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['authMode']);
+    });
+
+    it('should accept valid authMode values', () => {
+      
+      
+      const modes = ['auto', 'header', 'query', 'both'];
+      
+      modes.forEach(mode => {
+        const config = {
+          baseUrl: 'https://example.com',
+          apiToken: 'test-token',
+          authMode: mode,
+          streams: [
+            { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+          ],
+        };
+
+        const result = ConfigValidator.validateMultiStreamConfig(config);
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    it('should reject empty streams array', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['streams']);
+      expect(result.errors[0].message).toContain('empty');
+    });
+
+    it('should reject stream with empty id', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [
+          { id: '', pageUrl: 'https://dexscreener.com/solana' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['streams', '0', 'id']);
+    });
+
+    it('should reject stream with empty pageUrl', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [
+          { id: 'stream1', pageUrl: '' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['streams', '0', 'pageUrl']);
+    });
+
+    it('should reject stream with invalid pageUrl', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [
+          { id: 'stream1', pageUrl: 'not-a-url' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['streams', '0', 'pageUrl']);
+    });
+
+    it('should validate multiple streams correctly', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [
+          { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+          { id: '', pageUrl: 'not-a-url' },
+          { id: 'stream3', pageUrl: 'https://dexscreener.com/ethereum' },
+        ],
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBe(2);
+      expect(result.errors.some(e => e.path.includes('1'))).toBe(true);
+    });
+
+    it('should reject non-positive retryMs', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [
+          { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+        ],
+        retryMs: 0,
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['retryMs']);
+    });
+
+    it('should reject non-integer keepAliveMs', () => {
+      
+      
+      const config = {
+        baseUrl: 'https://example.com',
+        apiToken: 'test-token',
+        streams: [
+          { id: 'stream1', pageUrl: 'https://dexscreener.com/solana' },
+        ],
+        keepAliveMs: 120.5,
+      };
+
+      const result = ConfigValidator.validateMultiStreamConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0].path).toEqual(['keepAliveMs']);
+    });
+  });
+});
+
+describe('Error Sanitization', () => {
+  describe('sanitizeErrorMessage', () => {
+    it('should remove Apify API tokens', () => {
+      const message = 'Auth failed with token apify_api_1234567890abcdef';
+      const sanitized = sanitizeErrorMessage(message);
+      
+      expect(sanitized).not.toContain('apify_api_1234567890abcdef');
+      expect(sanitized).toContain('[REDACTED]');
+    });
+
+    it('should remove Bearer tokens', () => {
+      const message = 'Authorization: Bearer abc123xyz789';
+      const sanitized = sanitizeErrorMessage(message);
+      
+      expect(sanitized).not.toContain('abc123xyz789');
+      expect(sanitized).toContain('[REDACTED]');
+    });
+
+    it('should remove tokens from query parameters', () => {
+      const message = 'Failed to connect to wss://example.com?token=secret123&page_url=test';
+      const sanitized = sanitizeErrorMessage(message);
+      
+      expect(sanitized).not.toContain('secret123');
+      expect(sanitized).toContain('token=[REDACTED]');
+      expect(sanitized).toContain('page_url=test');
+    });
+
+    it('should remove tokens from Authorization headers', () => {
+      const message = 'Request failed with Authorization: apify_api_secret123';
+      const sanitized = sanitizeErrorMessage(message);
+      
+      expect(sanitized).not.toContain('apify_api_secret123');
+      expect(sanitized).toContain('Authorization: [REDACTED]');
+    });
+
+    it('should remove long alphanumeric strings that look like tokens', () => {
+      const longToken = 'a'.repeat(50);
+      const message = `Connection failed with token ${longToken}`;
+      const sanitized = sanitizeErrorMessage(message);
+      
+      expect(sanitized).not.toContain(longToken);
+      expect(sanitized).toContain('[REDACTED]');
+    });
+
+    it('should handle empty or null messages', () => {
+      expect(sanitizeErrorMessage('')).toBe('');
+      expect(sanitizeErrorMessage(null as any)).toBe(null);
+    });
+
+    it('should not modify messages without sensitive data', () => {
+      const message = 'Connection failed: network timeout';
+      const sanitized = sanitizeErrorMessage(message);
+      
+      expect(sanitized).toBe(message);
+    });
+  });
+
+  describe('sanitizeError', () => {
+    it('should sanitize Error object message', () => {
+      const error = new Error('Auth failed with token apify_api_secret123');
+      const sanitized = sanitizeError(error);
+      
+      expect(sanitized.message).not.toContain('apify_api_secret123');
+      expect(sanitized.message).toContain('[REDACTED]');
+      expect(sanitized.name).toBe('Error');
+    });
+
+    it('should sanitize Error stack trace', () => {
+      const error = new Error('Test error');
+      error.stack = 'Error: Test with token apify_api_secret123\n  at test.js:1:1';
+      const sanitized = sanitizeError(error);
+      
+      expect(sanitized.stack).not.toContain('apify_api_secret123');
+      expect(sanitized.stack).toContain('[REDACTED]');
+    });
+  });
+
+  describe('sanitizeErrorValue', () => {
+    it('should sanitize Error objects', () => {
+      const error = new Error('Token: apify_api_secret123');
+      const sanitized = sanitizeErrorValue(error);
+      
+      expect(sanitized).not.toContain('apify_api_secret123');
+      expect(sanitized).toContain('[REDACTED]');
+    });
+
+    it('should sanitize string errors', () => {
+      const error = 'Auth failed with token apify_api_secret123';
+      const sanitized = sanitizeErrorValue(error);
+      
+      expect(sanitized).not.toContain('apify_api_secret123');
+      expect(sanitized).toContain('[REDACTED]');
+    });
+
+    it('should sanitize object errors', () => {
+      const error = { message: 'Token: apify_api_secret123', code: 401 };
+      const sanitized = sanitizeErrorValue(error);
+      
+      expect(sanitized).not.toContain('apify_api_secret123');
+      expect(sanitized).toContain('[REDACTED]');
+    });
+
+    it('should handle unknown error types', () => {
+      const sanitized = sanitizeErrorValue(undefined);
+      
+      expect(sanitized).toBe('Unknown error');
+    });
+  });
+
+  describe('createErrorWithContext', () => {
+    it('should create error with network context', () => {
+      const error = 'Connection timeout';
+      const result = createErrorWithContext(error, 'connecting', 'network');
+      
+      expect(result).toContain('Network error');
+      expect(result).toContain('state: connecting');
+      expect(result).toContain('Connection timeout');
+    });
+
+    it('should create error with auth context', () => {
+      const error = 'Invalid token';
+      const result = createErrorWithContext(error, 'disconnected', 'auth');
+      
+      expect(result).toContain('Authentication error');
+      expect(result).toContain('state: disconnected');
+      expect(result).toContain('Invalid token');
+    });
+
+    it('should create error with protocol context', () => {
+      const error = 'Invalid JSON';
+      const result = createErrorWithContext(error, 'connected', 'protocol');
+      
+      expect(result).toContain('Protocol error');
+      expect(result).toContain('state: connected');
+      expect(result).toContain('Invalid JSON');
+    });
+
+    it('should sanitize tokens in error context', () => {
+      const error = 'Auth failed with token apify_api_secret123';
+      const result = createErrorWithContext(error, 'connecting', 'auth');
+      
+      expect(result).not.toContain('apify_api_secret123');
+      expect(result).toContain('[REDACTED]');
+    });
+
+    it('should handle unknown error type', () => {
+      const error = 'Something went wrong';
+      const result = createErrorWithContext(error, 'connected', 'unknown');
+      
+      expect(result).toContain('Error');
+      expect(result).toContain('state: connected');
+      expect(result).toContain('Something went wrong');
+    });
+  });
+
+  describe('sanitizeUrl', () => {
+    it('should remove token from query parameters', () => {
+      const url = 'wss://example.com/events?token=secret123&page_url=test';
+      const sanitized = sanitizeUrl(url);
+      
+      expect(sanitized).not.toContain('secret123');
+      expect(sanitized).toContain('token=[REDACTED]');
+      expect(sanitized).toContain('page_url=test');
+    });
+
+    it('should handle URLs without tokens', () => {
+      const url = 'wss://example.com/events?page_url=test';
+      const sanitized = sanitizeUrl(url);
+      
+      expect(sanitized).toBe(url);
+    });
+
+    it('should handle invalid URLs with regex fallback', () => {
+      const url = 'not-a-valid-url?token=secret123';
+      const sanitized = sanitizeUrl(url);
+      
+      expect(sanitized).not.toContain('secret123');
+      expect(sanitized).toContain('token=[REDACTED]');
+    });
+
+    it('should handle empty URLs', () => {
+      expect(sanitizeUrl('')).toBe('');
+      expect(sanitizeUrl(null as any)).toBe(null);
+    });
+  });
+
+  describe('containsSensitiveData', () => {
+    it('should detect Apify API tokens', () => {
+      expect(containsSensitiveData('Token: apify_api_secret123')).toBe(true);
+    });
+
+    it('should detect Bearer tokens', () => {
+      expect(containsSensitiveData('Authorization: Bearer abc123')).toBe(true);
+    });
+
+    it('should detect token query parameters', () => {
+      expect(containsSensitiveData('URL: ?token=secret123')).toBe(true);
+    });
+
+    it('should detect Authorization headers', () => {
+      expect(containsSensitiveData('Authorization: secret123')).toBe(true);
+    });
+
+    it('should detect long alphanumeric strings', () => {
+      const longToken = 'a'.repeat(50);
+      expect(containsSensitiveData(`Token: ${longToken}`)).toBe(true);
+    });
+
+    it('should return false for safe messages', () => {
+      expect(containsSensitiveData('Connection timeout')).toBe(false);
+      expect(containsSensitiveData('Network error')).toBe(false);
+      expect(containsSensitiveData('')).toBe(false);
     });
   });
 });

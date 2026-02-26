@@ -99,7 +99,7 @@ describe('InteractiveWizard', () => {
         const question = Array.isArray(questions) ? questions[0] : questions;
         if (question.name === 'baseUrl' && question.validate) {
           // Test invalid URLs
-          expect(question.validate('http://example.com')).toBe(
+          expect(question.validate('ftp://example.com')).toBe(
             'Invalid URL. Must be a valid HTTPS URL (e.g., https://your-actor.apify.actor)'
           );
           expect(question.validate('')).toBe('Base URL is required');
@@ -107,8 +107,11 @@ describe('InteractiveWizard', () => {
             'Invalid URL. Must be a valid HTTPS URL (e.g., https://your-actor.apify.actor)'
           );
           
-          // Test valid URL
+          // Test valid URLs - HTTP, HTTPS, WS, and WSS are all valid
           expect(question.validate('https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor')).toBe(true);
+          expect(question.validate('http://example.com')).toBe(true);
+          expect(question.validate('ws://example.com')).toBe(true);
+          expect(question.validate('wss://example.com')).toBe(true);
         }
         return { baseUrl: 'https://muhammetakkurtt--dexscreener-realtime-monitor.apify.actor' };
       }) as any);

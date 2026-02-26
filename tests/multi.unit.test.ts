@@ -2,36 +2,36 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DexScreenerMultiStream } from '../src/multi';
 import type { ConnectionState, MultiStreamConfig } from '../src/types';
 
-const mockEventSourceInstances: Map<string, {
+const mockWebSocketInstances: Map<string, {
   close: ReturnType<typeof vi.fn>;
-  addEventListener: ReturnType<typeof vi.fn>;
-  onopen: ((event: Event) => void) | null;
-  onmessage: ((event: MessageEvent) => void) | null;
-  onerror: ((event: Event) => void) | null;
-  _eventListeners: Map<string, ((event: MessageEvent) => void)[]>;
+  on: ReturnType<typeof vi.fn>;
+  _eventHandlers: Map<string, Function>;
 }> = new Map();
 
-let eventSourceConstructorCalls: string[] = [];
+let webSocketConstructorCalls: Array<{ url: string; options: any }> = [];
 
-vi.mock('eventsource', () => {
+vi.mock('ws', () => {
   return {
-    EventSource: class MockEventSource {
+    default: class MockWebSocket {
       close = vi.fn();
-      onopen: ((event: Event) => void) | null = null;
-      onmessage: ((event: MessageEvent) => void) | null = null;
-      onerror: ((event: Event) => void) | null = null;
-      _eventListeners: Map<string, ((event: MessageEvent) => void)[]> = new Map();
+      _eventHandlers: Map<string, Function> = new Map();
       
-      addEventListener = vi.fn((type: string, listener: (event: MessageEvent) => void) => {
-        if (!this._eventListeners.has(type)) {
-          this._eventListeners.set(type, []);
-        }
-        this._eventListeners.get(type)!.push(listener);
+      on = vi.fn((event: string, handler: Function) => {
+        this._eventHandlers.set(event, handler);
       });
       
-      constructor(url: string) {
-        eventSourceConstructorCalls.push(url);
-        mockEventSourceInstances.set(url, this);
+      constructor(url: string, options?: any) {
+        const key = `${url}|${JSON.stringify(options)}`;
+        webSocketConstructorCalls.push({ url, options });
+        const instance = {
+          close: vi.fn(),
+          on: vi.fn((event: string, handler: Function) => {
+            instance._eventHandlers.set(event, handler);
+          }),
+          _eventHandlers: new Map<string, Function>(),
+        };
+        mockWebSocketInstances.set(key, instance);
+        Object.assign(this, instance);
       }
     },
   };
@@ -54,8 +54,8 @@ describe('DexScreenerMultiStream', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    eventSourceConstructorCalls = [];
-    mockEventSourceInstances.clear();
+    webSocketConstructorCalls = [];
+    mockWebSocketInstances.clear();
   });
 
   afterEach(() => {
@@ -75,10 +75,10 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      expect(eventSourceConstructorCalls.length).toBe(3);
+      expect(webSocketConstructorCalls.length).toBe(3);
     });
 
-    it('should create EventSource for each stream with correct URL', () => {
+    it('should create WebSocket for each stream with correct URL', () => {
       const config: MultiStreamConfig = {
         baseUrl,
         apiToken,
@@ -89,8 +89,8 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      expect(eventSourceConstructorCalls[0]).toContain(encodeURIComponent('https://dexscreener.com/solana/trending'));
-      expect(eventSourceConstructorCalls[1]).toContain(encodeURIComponent('https://dexscreener.com/ethereum/trending'));
+      expect(webSocketConstructorCalls[0].url).toContain(encodeURIComponent('https://dexscreener.com/solana/trending'));
+      expect(webSocketConstructorCalls[1].url).toContain(encodeURIComponent('https://dexscreener.com/ethereum/trending'));
     });
 
     it('should handle empty streams array', () => {
@@ -101,7 +101,40 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      expect(eventSourceConstructorCalls.length).toBe(0);
+      expect(webSocketConstructorCalls.length).toBe(0);
+    });
+
+    it('should pass authMode to all streams', () => {
+      const config: MultiStreamConfig = {
+        baseUrl,
+        apiToken,
+        authMode: 'query',
+        streams: [
+          { id: 'stream-1', pageUrl: 'https://dexscreener.com/solana/trending' },
+          { id: 'stream-2', pageUrl: 'https://dexscreener.com/ethereum/trending' },
+        ],
+      };
+      const multiStream = new DexScreenerMultiStream(config);
+      multiStream.startAll();
+      // When authMode is 'query', token should be in URL
+      expect(webSocketConstructorCalls[0].url).toContain('token=');
+      expect(webSocketConstructorCalls[1].url).toContain('token=');
+    });
+
+    it('should use header auth when authMode is header', () => {
+      const config: MultiStreamConfig = {
+        baseUrl,
+        apiToken,
+        authMode: 'header',
+        streams: [
+          { id: 'stream-1', pageUrl: 'https://dexscreener.com/solana/trending' },
+        ],
+      };
+      const multiStream = new DexScreenerMultiStream(config);
+      multiStream.startAll();
+      // When authMode is 'header', token should NOT be in URL but in headers
+      expect(webSocketConstructorCalls[0].url).not.toContain('token=');
+      expect(webSocketConstructorCalls[0].options?.headers?.Authorization).toBe(`Bearer ${apiToken}`);
     });
   });
 
@@ -118,7 +151,7 @@ describe('DexScreenerMultiStream', () => {
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
       multiStream.stopAll();
-      for (const instance of mockEventSourceInstances.values()) {
+      for (const instance of mockWebSocketInstances.values()) {
         expect(instance.close).toHaveBeenCalledTimes(1);
       }
     });
@@ -133,10 +166,10 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      expect(eventSourceConstructorCalls.length).toBe(1);
+      expect(webSocketConstructorCalls.length).toBe(1);
       multiStream.stopAll();
       multiStream.startAll();
-      expect(eventSourceConstructorCalls.length).toBe(2);
+      expect(webSocketConstructorCalls.length).toBe(2);
     });
 
     it('should set all streams to disconnected state after stopAll', () => {
@@ -174,14 +207,22 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      expect(eventSourceConstructorCalls.length).toBe(2);
-      const stream1Url = eventSourceConstructorCalls[0];
-      const stream1Instance = mockEventSourceInstances.get(stream1Url)!;
-      stream1Instance.onerror?.(new Event('error'));
+      expect(webSocketConstructorCalls.length).toBe(2);
+      
+      // Get first stream instance and trigger close event (network error)
+      const stream1Key = Array.from(mockWebSocketInstances.keys())[0];
+      const stream1Instance = mockWebSocketInstances.get(stream1Key)!;
+      const closeHandler = stream1Instance._eventHandlers.get('close');
+      // Close code 1006 is abnormal closure (network error) - should trigger reconnection
+      closeHandler?.(1006, Buffer.from('Connection lost'));
+      
+      // Advance timers to trigger reconnection
       vi.advanceTimersByTime(3000);
-      expect(eventSourceConstructorCalls.length).toBe(3);
-      const stream2Url = eventSourceConstructorCalls[1];
-      const stream2Instance = mockEventSourceInstances.get(stream2Url)!;
+      expect(webSocketConstructorCalls.length).toBe(3);
+      
+      // Verify second stream was not affected
+      const stream2Key = Array.from(mockWebSocketInstances.keys())[1];
+      const stream2Instance = mockWebSocketInstances.get(stream2Key)!;
       expect(stream2Instance.close).not.toHaveBeenCalled();
     });
 
@@ -200,9 +241,13 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      const failingStreamUrl = eventSourceConstructorCalls[1];
-      const failingInstance = mockEventSourceInstances.get(failingStreamUrl)!;
-      failingInstance.onerror?.(new Event('error'));
+      
+      // Trigger error on failing stream
+      const failingKey = Array.from(mockWebSocketInstances.keys())[1];
+      const failingInstance = mockWebSocketInstances.get(failingKey)!;
+      const errorHandler = failingInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Connection failed'));
+      
       expect(errorCallbacks.length).toBe(1);
       expect(errorCallbacks[0].streamId).toBe('failing');
     });
@@ -222,18 +267,23 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      const healthyStreamUrl = eventSourceConstructorCalls[0];
-      const failingStreamUrl = eventSourceConstructorCalls[1];
-      const healthyInstance = mockEventSourceInstances.get(healthyStreamUrl)!;
-      const failingInstance = mockEventSourceInstances.get(failingStreamUrl)!;
-      failingInstance.onerror?.(new Event('error'));
-      const pairsEvent = new MessageEvent('message', {
-        data: JSON.stringify({
-          event_type: 'pairs',
-          pairs: [{ chainId: 'solana', baseToken: { symbol: 'SOL' } }],
-        }),
+      
+      // Trigger error on failing stream
+      const failingKey = Array.from(mockWebSocketInstances.keys())[1];
+      const failingInstance = mockWebSocketInstances.get(failingKey)!;
+      const errorHandler = failingInstance._eventHandlers.get('error');
+      errorHandler?.(new Error('Connection failed'));
+      
+      // Send message to healthy stream
+      const healthyKey = Array.from(mockWebSocketInstances.keys())[0];
+      const healthyInstance = mockWebSocketInstances.get(healthyKey)!;
+      const messageHandler = healthyInstance._eventHandlers.get('message');
+      const messageData = JSON.stringify({
+        event_type: 'pairs',
+        pairs: [{ chainId: 'solana', baseToken: { symbol: 'SOL' } }],
       });
-      healthyInstance.onmessage?.(pairsEvent);
+      messageHandler?.(messageData);
+      
       expect(receivedEvents.length).toBe(1);
       expect(receivedEvents[0].streamId).toBe('healthy');
       expect(receivedEvents[0].pairs).toBe(1);
@@ -255,12 +305,14 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      const streamUrl = eventSourceConstructorCalls[0];
-      const instance = mockEventSourceInstances.get(streamUrl)!;
-      const pairsEvent = new MessageEvent('message', {
-        data: JSON.stringify({ event_type: 'pairs', pairs: [] }),
-      });
-      instance.onmessage?.(pairsEvent);
+      
+      // Get the WebSocket instance and trigger message
+      const wsKey = Array.from(mockWebSocketInstances.keys())[0];
+      const instance = mockWebSocketInstances.get(wsKey)!;
+      const messageHandler = instance._eventHandlers.get('message');
+      const messageData = JSON.stringify({ event_type: 'pairs', pairs: [] });
+      messageHandler?.(messageData);
+      
       expect(receivedContexts).toEqual(['my-stream']);
     });
 
@@ -278,15 +330,17 @@ describe('DexScreenerMultiStream', () => {
       };
       const multiStream = new DexScreenerMultiStream(config);
       multiStream.startAll();
-      const streamUrl = eventSourceConstructorCalls[0];
-      const instance = mockEventSourceInstances.get(streamUrl)!;
-      const pairsEvent = new MessageEvent('message', {
-        data: JSON.stringify({
-          event_type: 'pairs',
-          pairs: [{ chainId: 'solana' }, { chainId: 'solana' }],
-        }),
+      
+      // Get the WebSocket instance and trigger message with pairs
+      const wsKey = Array.from(mockWebSocketInstances.keys())[0];
+      const instance = mockWebSocketInstances.get(wsKey)!;
+      const messageHandler = instance._eventHandlers.get('message');
+      const messageData = JSON.stringify({
+        event_type: 'pairs',
+        pairs: [{ chainId: 'solana' }, { chainId: 'solana' }],
       });
-      instance.onmessage?.(pairsEvent);
+      messageHandler?.(messageData);
+      
       expect(receivedContexts).toEqual(['pair-stream', 'pair-stream']);
     });
   });
