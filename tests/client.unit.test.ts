@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DexScreenerStream } from '../src/client';
-import type { ConnectionState, Pair, StreamContext } from '../src/types';
+import type { ConnectionState, DexEvent, Pair, StreamContext } from '../src/types';
 import type WebSocket from 'ws';
 import { KeepAliveManager } from '../src/utils/keep-alive';
 
@@ -461,6 +461,125 @@ describe('DexScreenerStream', () => {
       messageHandler?.(pairsData);
       expect(receivedEvent).toBeDefined();
       expect(receivedEvent?.pairs?.length).toBe(1);
+    });
+
+    it('should normalize current actor envelope payloads', () => {
+      let receivedEvent: DexEvent | undefined;
+      let receivedPair: Pair | undefined;
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        onBatch: (event) => { receivedEvent = event; },
+        onPair: (pair) => { receivedPair = pair; },
+      });
+      stream.start();
+
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pairsData = Buffer.from(JSON.stringify({
+        event_type: 'pairs',
+        timestamp: '2026-04-24T10:58:36.126Z',
+        data: {
+          stats: {
+            m5: { txns: 134, volumeUSD: 13969 },
+          },
+          pairs: [{
+            type: {
+              case: 'typeAMM',
+              value: {
+                a: 'meteora',
+                launchpad: {
+                  progress: 100,
+                  creator: 'creator-address',
+                  migrationDEX: 'meteora',
+                  meta: { id: 'meteoradbc' },
+                },
+              },
+            },
+            chainId: 'solana',
+            dexId: 'meteora',
+            pairAddress: 'Dbc5hNaA9VatXYiYT5Vg4PpfvXLXM17wbUCABFjfP8wi',
+            baseToken: { symbol: 'CHOI' },
+            quoteToken: { symbol: 'SOL' },
+            price: '0.00002588',
+            priceUSD: '0.002218',
+            pairCreatedAt: { seconds: 1776392344, nanos: 123000000 },
+          }],
+        },
+      }));
+
+      messageHandler?.(pairsData);
+
+      const pair = receivedEvent?.pairs?.[0];
+      expect(pair).toBeDefined();
+      expect(pair?.priceUsd).toBe('0.002218');
+      expect(pair?.priceUSD).toBe('0.002218');
+      expect(pair?.quoteTokenSymbol).toBe('SOL');
+      expect(pair?.pairCreatedAt).toBe(1776392344123);
+      expect(pair?.pairCreatedAtRaw).toEqual({ seconds: 1776392344, nanos: 123000000 });
+      expect(pair?.launchpad?.migrationDex).toBe('meteora');
+      expect(pair?.launchpad?.migrationDEX).toBe('meteora');
+      expect(pair?.type?.value?.launchpad?.migrationDex).toBe('meteora');
+      expect(receivedEvent?.stats?.m5?.volumeUsd).toBe(13969);
+      expect(receivedEvent?.stats?.m5?.volumeUSD).toBe(13969);
+      expect(receivedEvent?.event_type).toBe('pairs');
+      expect(receivedEvent?.timestamp).toBe('2026-04-24T10:58:36.126Z');
+      expect(receivedPair).toBe(pair);
+    });
+
+    it('should preserve legacy top-level camelCase payloads', () => {
+      let receivedEvent: DexEvent | undefined;
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        onBatch: (event) => { receivedEvent = event; },
+      });
+      stream.start();
+
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const pairsData = Buffer.from(JSON.stringify({
+        event_type: 'pairs',
+        pairs: [{
+          chainId: 'solana',
+          quoteToken: { symbol: 'USDC' },
+          quoteTokenSymbol: 'USDC',
+          priceUsd: '1.23',
+          pairCreatedAt: 1776392344123,
+          launchpad: { migrationDex: 'pumpswap' },
+        }],
+        stats: { h24: { txns: 10, volumeUsd: 1000 } },
+      }));
+
+      messageHandler?.(pairsData);
+
+      const pair = receivedEvent?.pairs?.[0];
+      expect(pair?.priceUsd).toBe('1.23');
+      expect(pair?.quoteTokenSymbol).toBe('USDC');
+      expect(pair?.pairCreatedAt).toBe(1776392344123);
+      expect(pair?.pairCreatedAtRaw).toBeUndefined();
+      expect(pair?.launchpad?.migrationDex).toBe('pumpswap');
+      expect(receivedEvent?.stats?.h24?.volumeUsd).toBe(1000);
+    });
+
+    it('should use actor error data message when present', () => {
+      let errorReceived: unknown;
+      const stream = new DexScreenerStream({
+        baseUrl, pageUrl, apiToken,
+        onError: (error) => { errorReceived = error; },
+      });
+      stream.start();
+
+      const messageHandler = mockWebSocketInstance._eventHandlers.get('message');
+      const errorData = Buffer.from(JSON.stringify({
+        event_type: 'error',
+        data: {
+          code: 'BAD_REQUEST',
+          message: 'page_url must be a valid Dexscreener URL',
+        },
+      }));
+
+      messageHandler?.(errorData);
+
+      expect(errorReceived).toBeInstanceOf(Error);
+      expect((errorReceived as Error).message).toContain('BAD_REQUEST');
+      expect((errorReceived as Error).message).toContain('page_url must be a valid Dexscreener URL');
     });
   });
 

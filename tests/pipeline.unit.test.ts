@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ProcessingPipeline } from '../src/pipeline/index.js';
+import { normalizeDexEvent } from '../src/normalize.js';
 import type { DexEvent, Pair } from '../src/types.js';
 
 describe('ProcessingPipeline', () => {
@@ -249,6 +250,28 @@ describe('ProcessingPipeline', () => {
       expect(result.transformed).toHaveLength(1);
       expect(result.transformed![0]).toEqual({
         price: '2000',
+      });
+    });
+
+    it('should transform normalized live priceUSD fields as priceUsd', () => {
+      const pipeline = new ProcessingPipeline({
+        transforms: {
+          fields: ['priceUsd'],
+        },
+      });
+      const event = normalizeDexEvent({
+        pairs: [{
+          chainId: 'solana',
+          quoteToken: { symbol: 'SOL' },
+          priceUSD: '0.002218',
+        }],
+      });
+
+      const result = pipeline.process(event, 'stream-1');
+
+      expect(result.transformed).toHaveLength(1);
+      expect(result.transformed![0]).toEqual({
+        priceUsd: '0.002218',
       });
     });
 

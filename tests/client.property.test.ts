@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import type { DexEvent, Pair, StreamContext } from '../src/types';
+import { normalizeDexEvent } from '../src/normalize';
 
 const hexStringArb = (length: number) => 
   fc.array(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'), 
@@ -27,6 +28,21 @@ const pairArbitrary = fc.record({
   priceUsd: fc.float({ min: 0, noNaN: true }).map(n => n.toString()),
 });
 
+const livePairArbitrary = pairArbitrary
+  .chain(pair => fc.record({
+    pair: fc.constant(pair),
+    seconds: fc.integer({ min: 1_600_000_000, max: 1_900_000_000 }),
+    nanos: fc.integer({ min: 0, max: 999_999_999 }),
+  }))
+  .map(({ pair, seconds, nanos }) => {
+    const { priceUsd, ...rest } = pair;
+    return {
+      ...rest,
+      priceUSD: priceUsd,
+      pairCreatedAt: { seconds, nanos },
+    };
+  });
+
 const statsArbitrary = fc.record({
   m5: fc.option(fc.record({
     txns: fc.integer({ min: 0 }),
@@ -42,6 +58,21 @@ const statsArbitrary = fc.record({
   }), { nil: undefined }),
 });
 
+const liveStatsArbitrary = fc.record({
+  m5: fc.option(fc.record({
+    txns: fc.integer({ min: 0 }),
+    volumeUSD: fc.float({ min: 0, noNaN: true }),
+  }), { nil: undefined }),
+  h1: fc.option(fc.record({
+    txns: fc.integer({ min: 0 }),
+    volumeUSD: fc.float({ min: 0, noNaN: true }),
+  }), { nil: undefined }),
+  h24: fc.option(fc.record({
+    txns: fc.integer({ min: 0 }),
+    volumeUSD: fc.float({ min: 0, noNaN: true }),
+  }), { nil: undefined }),
+});
+
 const timestampArbitrary = fc.integer({ 
   min: new Date('2020-01-01').getTime(), 
   max: new Date('2030-12-31').getTime() 
@@ -52,6 +83,15 @@ const dexEventArbitrary = fc.record({
   stats: statsArbitrary,
   pairs: fc.array(pairArbitrary, { minLength: 0, maxLength: 20 }),
   timestamp: timestampArbitrary,
+});
+
+const liveEnvelopeArbitrary = fc.record({
+  event_type: fc.constant('pairs'),
+  timestamp: timestampArbitrary,
+  data: fc.record({
+    stats: liveStatsArbitrary,
+    pairs: fc.array(livePairArbitrary, { minLength: 0, maxLength: 20 }),
+  }),
 });
 
 function processMessage(
@@ -81,8 +121,13 @@ function processMessage(
       return { success: true };
     }
     
-    if (parsed.event_type === 'pairs' || parsed.pairs) {
-      const event = parsed as DexEvent;
+    const eventData = parsed.data ?? parsed;
+    if (parsed.event_type === 'pairs' || eventData.pairs) {
+      const event = normalizeDexEvent({
+        ...eventData,
+        event_type: parsed.event_type ?? eventData.event_type,
+        timestamp: parsed.timestamp ?? eventData.timestamp,
+      } as DexEvent);
       callbacks.onBatch?.(event, ctx);
       
       if (event.pairs && callbacks.onPair) {
@@ -149,6 +194,43 @@ describe('JSON Event Parsing', () => {
       { numRuns: 100 }
     );
   });
+
+  it('should normalize actor envelope payloads with uppercase fields', () => {
+    fc.assert(
+      fc.property(liveEnvelopeArbitrary, (message) => {
+        const jsonString = JSON.stringify(message);
+        let parsedEvent: DexEvent | undefined;
+
+        processMessage(jsonString, {
+          onBatch: (e) => { parsedEvent = e; },
+        });
+
+        expect(parsedEvent).toBeDefined();
+        expect(parsedEvent!.event_type).toBe('pairs');
+        expect(parsedEvent!.timestamp).toBe(message.timestamp);
+        expect(parsedEvent!.pairs).toBeInstanceOf(Array);
+        expect(parsedEvent!.pairs!.length).toBe(message.data.pairs.length);
+
+        if (message.data.stats.m5) {
+          expect(parsedEvent!.stats?.m5?.volumeUsd).toBe(message.data.stats.m5.volumeUSD);
+          expect(parsedEvent!.stats?.m5?.volumeUSD).toBe(message.data.stats.m5.volumeUSD);
+        }
+
+        for (let i = 0; i < message.data.pairs.length; i++) {
+          const originalPair = message.data.pairs[i];
+          const parsedPair = parsedEvent!.pairs![i];
+          expect(parsedPair.priceUsd).toBe(originalPair.priceUSD);
+          expect(parsedPair.priceUSD).toBe(originalPair.priceUSD);
+          expect(parsedPair.quoteTokenSymbol).toBe(originalPair.quoteToken.symbol);
+          expect(parsedPair.pairCreatedAt).toBe(
+            (originalPair.pairCreatedAt.seconds * 1000) +
+              Math.floor(originalPair.pairCreatedAt.nanos / 1_000_000)
+          );
+        }
+      }),
+      { numRuns: 100 }
+    );
+  });
 });
 
 describe('onBatch Callback Invocation', () => {
@@ -172,7 +254,7 @@ describe('onBatch Callback Invocation', () => {
         
         expect(callCount).toBe(1);
         expect(receivedEvent).toBeDefined();
-        expect(receivedEvent!.pairs).toEqual(event.pairs);
+        expect(receivedEvent!.pairs).toEqual(normalizeDexEvent(event).pairs);
         expect(receivedContext).toBeDefined();
         // streamId should match if provided, or be auto-generated if not
         if (streamId !== undefined) {
