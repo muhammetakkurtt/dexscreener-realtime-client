@@ -202,7 +202,7 @@ const hftConfig: TransformConfig = {
   fields: [
     'pairAddress',
     'priceUsd',
-    'priceNative'
+    'price'
   ]
 };
 

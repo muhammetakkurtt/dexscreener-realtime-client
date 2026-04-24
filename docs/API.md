@@ -242,13 +242,16 @@ type DexEvent = {
 
 ```typescript
 type Pair = {
+  type?: PairType;
   chainId?: string;
   dexId?: string;
   pairAddress?: string;
   baseToken?: Token;
   quoteToken?: Token;
+  quoteTokenSymbol?: string;
   priceUsd?: string;
-  priceNative?: string;
+  priceUSD?: string;
+  price?: string;
   txns?: Txns;
   volume?: Volume;
   priceChange?: PriceChange;
@@ -256,6 +259,7 @@ type Pair = {
   marketCap?: number;
   fdv?: number;
   pairCreatedAt?: number;
+  pairCreatedAtRaw?: PairCreatedAtRaw;
   labels?: string[];
   buyers?: UserCounts;
   sellers?: UserCounts;
@@ -375,7 +379,7 @@ type CmsProfile = {
   description?: string;
   links?: Array<{
     label?: string;
-    type?: string;
+    type?: string | number;
     url?: string;
   }>;
   nsfw?: boolean;
@@ -390,8 +394,33 @@ type Launchpad = {
   progress?: number;
   creator?: string;
   migrationDex?: string;
+  migrationDEX?: string;
   meta?: {
     id?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+```
+
+#### PairCreatedAtRaw
+
+```typescript
+type PairCreatedAtRaw = {
+  seconds?: number | string;
+  nanos?: number | string;
+  [key: string]: unknown;
+};
+```
+
+#### PairType
+
+```typescript
+type PairType = {
+  case?: string;
+  value?: {
+    a?: string;
+    launchpad?: Launchpad;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -402,13 +431,15 @@ type Launchpad = {
 
 ```typescript
 type DexEventStats = {
-  m5?: { txns?: number; volumeUsd?: number };
-  h1?: { txns?: number; volumeUsd?: number };
-  h6?: { txns?: number; volumeUsd?: number };
-  h24?: { txns?: number; volumeUsd?: number };
+  m5?: { txns?: number; volumeUsd?: number; volumeUSD?: number };
+  h1?: { txns?: number; volumeUsd?: number; volumeUSD?: number };
+  h6?: { txns?: number; volumeUsd?: number; volumeUSD?: number };
+  h24?: { txns?: number; volumeUsd?: number; volumeUSD?: number };
   [key: string]: unknown;
 };
 ```
+
+The SDK normalizes current Actor payloads before invoking callbacks. Raw `priceUSD`, `stats.*.volumeUSD`, `pairCreatedAt: { seconds, nanos }`, and `type.value.launchpad.migrationDEX` remain available, while camelCase aliases `priceUsd`, `stats.*.volumeUsd`, numeric `pairCreatedAt`, `quoteTokenSymbol`, and `launchpad.migrationDex` are populated for compatibility.
 
 ---
 

@@ -286,6 +286,7 @@ type DexEvent = {
 ```typescript
 type Pair = {
   // Identity & Classification
+  type?: PairType;               // Raw pair type discriminator (e.g. typeAMM)
   chainId?: string;              // Blockchain network (e.g., "solana", "ethereum")
   dexId?: string;                // DEX identifier (e.g., "raydium", "uniswap")
   pairAddress?: string;          // Unique pair contract address
@@ -298,9 +299,10 @@ type Pair = {
   
   // Pricing
   price?: string;                // Price in quote token
-  priceUsd?: string;             // Price in USD
+  priceUsd?: string;             // Normalized USD price
+  priceUSD?: string;             // Raw USD price from DexScreener, when present
   priceChange?: PriceChange;     // Price changes over time periods
-  
+
   // Trading Activity
   txns?: Txns;                   // Transaction counts (buys/sells)
   buyers?: UserCounts;           // Unique buyer counts over time periods (m5, h1, h6, h24)
@@ -318,7 +320,8 @@ type Pair = {
   fdv?: number;                  // Fully diluted valuation
   
   // Metadata & Features
-  pairCreatedAt?: number;        // Unix timestamp of pair creation
+  pairCreatedAt?: number;        // Normalized Unix timestamp in milliseconds
+  pairCreatedAtRaw?: PairCreatedAtRaw; // Raw { seconds, nanos } timestamp, when present
   profile?: Profile;             // Token profile information (eti, header, website, twitter, linkCount, imgKey)
   cmsProfile?: CmsProfile;       // CMS profile information (headerId, iconId, description, links, nsfw)
   isBoostable?: boolean;         // Whether pair can be boosted
@@ -334,6 +337,24 @@ type Pair = {
 };
 ```
 
+The SDK normalizes current Actor payloads before invoking callbacks. Raw fields such as `priceUSD`, `stats.*.volumeUSD`, `pairCreatedAt: { seconds, nanos }`, and nested `type.value.launchpad` are preserved where useful, while camelCase aliases like `priceUsd`, `stats.*.volumeUsd`, `pairCreatedAt`, `quoteTokenSymbol`, and `launchpad.migrationDex` are guaranteed for SDK consumers.
+
+```typescript
+type PairCreatedAtRaw = {
+  seconds?: number | string;
+  nanos?: number | string;
+};
+
+type PairType = {
+  case?: string;
+  value?: {
+    a?: string;
+    launchpad?: Launchpad;
+    [key: string]: unknown;
+  };
+};
+```
+
 #### Example DexEvent Structure
 
 The SDK automatically parses WebSocket messages and delivers clean `DexEvent` objects to your callbacks. Here's what you receive in the `onBatch` callback:
@@ -341,10 +362,10 @@ The SDK automatically parses WebSocket messages and delivers clean `DexEvent` ob
 ```json
 {
   "stats": {
-    "m5": { "txns": 54923, "volumeUsd": 9045447.56 },
-    "h1": { "txns": 756730, "volumeUsd": 134179114.12 },
-    "h6": { "txns": 4880021, "volumeUsd": 1151490222.86 },
-    "h24": { "txns": 19323940, "volumeUsd": 4377335189.87 }
+    "m5": { "txns": 54923, "volumeUsd": 9045447.56, "volumeUSD": 9045447.56 },
+    "h1": { "txns": 756730, "volumeUsd": 134179114.12, "volumeUSD": 134179114.12 },
+    "h6": { "txns": 4880021, "volumeUsd": 1151490222.86, "volumeUSD": 1151490222.86 },
+    "h24": { "txns": 19323940, "volumeUsd": 4377335189.87, "volumeUSD": 4377335189.87 }
   },
   "pairs": [
     {
@@ -367,6 +388,7 @@ The SDK automatically parses WebSocket messages and delivers clean `DexEvent` ob
       "quoteTokenSymbol": "USD1",
       "price": "0.001820",
       "priceUsd": "0.001820",
+      "priceUSD": "0.001820",
       "txns": {
         "m5": { "buys": 68, "sells": 28 },
         "h1": { "buys": 1333, "sells": 1064 },
@@ -384,6 +406,7 @@ The SDK automatically parses WebSocket messages and delivers clean `DexEvent` ob
       "marketCap": 1820609,
       "fdv": 1820609,
       "pairCreatedAt": 1765041438000,
+      "pairCreatedAtRaw": { "seconds": 1765041438, "nanos": 0 },
       "profile": {
         "eti": true,
         "header": true,
@@ -425,6 +448,7 @@ The SDK automatically parses WebSocket messages and delivers clean `DexEvent` ob
       "quoteTokenSymbol": "SOL",
       "price": "0.00007098",
       "priceUsd": "0.009336",
+      "priceUSD": "0.009336",
       "txns": {
         "m5": { "buys": 57, "sells": 54 },
         "h1": { "buys": 7924, "sells": 799 },
@@ -442,6 +466,7 @@ The SDK automatically parses WebSocket messages and delivers clean `DexEvent` ob
       "marketCap": 9335780,
       "fdv": 9335780,
       "pairCreatedAt": 1764588851000,
+      "pairCreatedAtRaw": { "seconds": 1764588851, "nanos": 0 },
       "profile": {
         "eti": true,
         "header": true,

@@ -1202,7 +1202,7 @@ Extract only critical fields for low-latency applications:
 
 ```typescript
 const hftConfig: TransformConfig = {
-  fields: ['pairAddress', 'priceUsd', 'priceNative']
+  fields: ['pairAddress', 'priceUsd', 'price']
 };
 
 const hftTransformer = new Transformer(hftConfig);
@@ -3261,7 +3261,7 @@ node dist/cli.cjs --profile prod --jsonl-path /var/log/production.jsonl
     "fields": [
       "pairAddress",
       "priceUsd",
-      "priceNative"
+      "price"
     ]
   },
   "output": {
@@ -3690,7 +3690,7 @@ const nestedConfig: TransformConfig = {
     'quoteToken.symbol',
     'quoteToken.name',
     'priceUsd',
-    'priceNative',
+    'price',
     'volume.m5',
     'volume.h1',
     'volume.h6',
@@ -3743,7 +3743,7 @@ const stream = new DexScreenerStream({
     "name": "USD Coin"
   },
   "priceUsd": "123.45",
-  "priceNative": "1.0",
+  "price": "1.0",
   "volume": {
     "m5": 5000,
     "h1": 50000,
@@ -6406,7 +6406,7 @@ const mockEvent: DexEvent = {
         name: 'USD Coin'
       },
       priceUsd: '123.45',
-      priceNative: '1.0',
+      price: '1.0',
       volume: {
         h24: 1000000,
         h6: 250000,
