@@ -9,7 +9,11 @@ export type {
   Liquidity,
   Txns,
   Token,
+  PairCreatedAtRaw,
+  Launchpad,
+  PairType,
   Pair,
+  DexEventTimeframeStats,
   DexEventStats,
   DexEvent,
   StreamContext,
@@ -25,6 +29,12 @@ export type {
 } from './types.js';
 
 export { WSCloseCode } from './types.js';
+
+export {
+  normalizeDexEvent,
+  normalizeDexEventStats,
+  normalizePair,
+} from './normalize.js';
 
 export {
   sanitizeBaseUrl,

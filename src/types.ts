@@ -91,10 +91,17 @@ export type CmsProfile = {
   description?: string;
   links?: Array<{
     label?: string;
-    type?: string;
+    type?: string | number;
     url?: string;
   }>;
   nsfw?: boolean;
+  [key: string]: unknown;
+};
+
+/** Raw protobuf timestamp shape used by current DexScreener pair payloads. */
+export type PairCreatedAtRaw = {
+  seconds?: number | string;
+  nanos?: number | string;
   [key: string]: unknown;
 };
 
@@ -103,6 +110,7 @@ export type Launchpad = {
   progress?: number;
   creator?: string;
   migrationDex?: string;
+  migrationDEX?: string;
   meta?: {
     id?: string;
     [key: string]: unknown;
@@ -110,8 +118,20 @@ export type Launchpad = {
   [key: string]: unknown;
 };
 
+/** Pair type discriminator and nested AMM payload. */
+export type PairType = {
+  case?: string;
+  value?: {
+    a?: string;
+    launchpad?: Launchpad;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
 /** Trading pair data from DexScreener. */
 export type Pair = {
+  type?: PairType;
   chainId?: string;
   dexId?: string;
   pairAddress?: string;
@@ -120,6 +140,7 @@ export type Pair = {
   quoteTokenSymbol?: string;
   price?: string;
   priceUsd?: string;
+  priceUSD?: string;
   txns?: Txns;
   volume?: Volume;
   priceChange?: PriceChange;
@@ -127,6 +148,7 @@ export type Pair = {
   marketCap?: number;
   fdv?: number;
   pairCreatedAt?: number;
+  pairCreatedAtRaw?: PairCreatedAtRaw;
   labels?: string[];
   buyers?: UserCounts;
   sellers?: UserCounts;
@@ -143,12 +165,20 @@ export type Pair = {
   [key: string]: unknown;
 };
 
+/** Aggregated statistics for one timeframe. */
+export type DexEventTimeframeStats = {
+  txns?: number;
+  volumeUsd?: number;
+  volumeUSD?: number;
+  [key: string]: unknown;
+};
+
 /** Aggregated statistics from a DexScreener event. */
 export type DexEventStats = {
-  m5?: { txns?: number; volumeUsd?: number };
-  h1?: { txns?: number; volumeUsd?: number };
-  h6?: { txns?: number; volumeUsd?: number };
-  h24?: { txns?: number; volumeUsd?: number };
+  m5?: DexEventTimeframeStats;
+  h1?: DexEventTimeframeStats;
+  h6?: DexEventTimeframeStats;
+  h24?: DexEventTimeframeStats;
   [key: string]: unknown;
 };
 

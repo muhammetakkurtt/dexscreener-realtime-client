@@ -10,6 +10,7 @@ import { validateUrls } from './utils/url.js';
 import { KeepAliveManager } from './utils/keep-alive.js';
 import { AuthManager } from './auth/manager.js';
 import { sanitizeErrorValue, createErrorWithContext } from './errors/sanitizer.js';
+import { normalizeDexEvent } from './normalize.js';
 
 const DEFAULT_RETRY_MS = 3000;
 const DEFAULT_KEEP_ALIVE_MS = 120000; // 2 minutes
@@ -221,21 +222,24 @@ export class DexScreenerStream {
 
       // Handle error messages from server
       if (raw.event_type === 'error') {
-        const sanitizedMessage = sanitizeErrorValue(raw.message || 'Server error');
+        const errorData = raw.data && typeof raw.data === 'object' ? raw.data : {};
+        const rawMessage = raw.message ?? errorData.message ?? 'Server error';
+        const rawCode = raw.code ?? errorData.code;
+        const message = rawCode ? `${rawCode}: ${rawMessage}` : rawMessage;
+        const sanitizedMessage = sanitizeErrorValue(message);
         this.onError?.(new Error(sanitizedMessage), this.getContext());
         return;
       }
 
       // Actor sends: { data: { stats, pairs }, event_type, timestamp }
       const eventData = raw.data ?? raw;
-      
+
       if (raw.event_type === 'pairs' || eventData.pairs) {
-        const dexEvent: DexEvent = {
-          stats: eventData.stats,
-          pairs: eventData.pairs,
-          event_type: raw.event_type,
-          timestamp: raw.timestamp,
-        };
+        const dexEvent = normalizeDexEvent({
+          ...eventData,
+          event_type: raw.event_type ?? eventData.event_type,
+          timestamp: raw.timestamp ?? eventData.timestamp,
+        } as DexEvent);
         this.processEvent(dexEvent);
       }
     } catch (error) {
